@@ -1,0 +1,542 @@
+[
+  {
+    "name": "adjacent introducers",
+    "content": "#first#second",
+    "expected": [
+      "first",
+      "second"
+    ]
+  },
+  {
+    "name": "failed introducer does not hide next",
+    "content": "##tag",
+    "expected": [
+      "tag"
+    ]
+  },
+  {
+    "name": "ATX heading marker",
+    "content": "## tag",
+    "expected": []
+  },
+  {
+    "name": "number sign keycap",
+    "content": "#️⃣",
+    "expected": []
+  },
+  {
+    "name": "number sign keycap value",
+    "content": "##️⃣",
+    "expected": [
+      "#️⃣"
+    ]
+  },
+  {
+    "name": "number sign keycap continuation",
+    "content": "#first#️⃣",
+    "expected": [
+      "first#️⃣"
+    ]
+  },
+  {
+    "name": "exact identity",
+    "content": "#Work #work",
+    "expected": [
+      "Work",
+      "work"
+    ]
+  },
+  {
+    "name": "no normalization",
+    "content": "#café #café",
+    "expected": [
+      "café",
+      "café"
+    ]
+  },
+  {
+    "name": "word internal apostrophes",
+    "content": "#tag's #сім'я #O'Brien #O’Brien #OʼBrien #café's",
+    "expected": [
+      "tag's",
+      "сім'я",
+      "O'Brien",
+      "O’Brien",
+      "OʼBrien",
+      "café's"
+    ]
+  },
+  {
+    "name": "apostrophe boundaries",
+    "content": "'#tag' #users' #'missing #rock''roll #O‘Brien #A‍'B",
+    "expected": [
+      "tag",
+      "users",
+      "rock",
+      "O",
+      "A"
+    ]
+  },
+  {
+    "name": "ignored spellings deduplicate",
+    "content": "#AB #A‍B #́AB",
+    "expected": [
+      "AB"
+    ]
+  },
+  {
+    "name": "hierarchy expansion",
+    "content": "#book/fiction/history",
+    "expected": [
+      "book",
+      "book/fiction",
+      "book/fiction/history"
+    ]
+  },
+  {
+    "name": "hierarchy exact dedupe",
+    "content": "#book/fiction #book",
+    "expected": [
+      "book",
+      "book/fiction"
+    ]
+  },
+  {
+    "name": "literal ampersand",
+    "content": "#R\u0026D",
+    "expected": [
+      "R\u0026D"
+    ]
+  },
+  {
+    "name": "named character reference boundary",
+    "content": "#R\u0026amp;D",
+    "expected": [
+      "R"
+    ]
+  },
+  {
+    "name": "character reference requires a real opener",
+    "content": "~#a!\u0026\u0026amp;)*",
+    "expected": [
+      "a"
+    ]
+  },
+  {
+    "name": "unknown character reference stays literal",
+    "content": "#R\u0026bogus;D #Q\u0026amp;\u0026bogus;D",
+    "expected": [
+      "R\u0026bogus",
+      "Q"
+    ]
+  },
+  {
+    "name": "numeric character reference introducer",
+    "content": "\u0026#35;tag \u0026#x23;other",
+    "expected": []
+  },
+  {
+    "name": "named character reference introducer",
+    "content": "\u0026num;tag",
+    "expected": []
+  },
+  {
+    "name": "escaped introducer and body",
+    "content": "\\#tag #foo\\+bar",
+    "expected": [
+      "foo"
+    ]
+  },
+  {
+    "name": "code contexts",
+    "content": "`#inline`\n\n```text\n#fenced\n```\n\n    #indented",
+    "expected": []
+  },
+  {
+    "name": "blockquote tab paragraph",
+    "content": "\u003e\t #tag",
+    "expected": [
+      "tag"
+    ]
+  },
+  {
+    "name": "trailing spaces before tag line",
+    "content": "before  \n#tag",
+    "expected": [
+      "tag"
+    ]
+  },
+  {
+    "name": "link and image contexts",
+    "content": "[#label](https://example.com/#destination) ![#alt](image#fragment)",
+    "expected": []
+  },
+  {
+    "name": "invalid link definition stays text",
+    "content": "[#use][bad]\n\n[bad]:(",
+    "expected": [
+      "use"
+    ]
+  },
+  {
+    "name": "invalid link definition label stays text",
+    "content": "[#label]:(",
+    "expected": [
+      "label"
+    ]
+  },
+  {
+    "name": "email in invalid link definition stays opaque",
+    "content": "[#foo@example.com]:(",
+    "expected": []
+  },
+  {
+    "name": "code in invalid link definition stays opaque",
+    "content": "[`#code`]:(",
+    "expected": []
+  },
+  {
+    "name": "URL in invalid link definition stays opaque",
+    "content": "[ https://example.com/#url]:(",
+    "expected": []
+  },
+  {
+    "name": "balanced bare reference remains a link",
+    "content": "[#hidden][valid]\n\n[valid]: path(foo)",
+    "expected": []
+  },
+  {
+    "name": "escaped bare destination parenthesis remains a link",
+    "content": "[#hidden][valid]\n\n[valid]: path\\(",
+    "expected": []
+  },
+  {
+    "name": "angle destination parenthesis remains a link",
+    "content": "[#hidden][valid]\n\n[valid]: \u003c(\u003e",
+    "expected": []
+  },
+  {
+    "name": "angle autolinks stay opaque",
+    "content": "\u003chttps://localhost/#local\u003e \u003cftp://example.com/#ftp\u003e \u003ccustom:foo#custom\u003e \u003chttps://foo.example_/#underscore\u003e",
+    "expected": []
+  },
+  {
+    "name": "literal URL context",
+    "content": "https://example.com/path#url /path#plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "non GFM URL schemes and forms stay text",
+    "content": "ftp://example.com/#ftp HTTP://example.com/#upper https://localhost/#local",
+    "expected": [
+      "ftp",
+      "upper",
+      "local"
+    ]
+  },
+  {
+    "name": "written GFM URL domains and paths",
+    "content": "https://example.COM/#hidden www.example.123/#also-hidden https://a_b.foo.example/路径#still-hidden https://foo_bar.example/#visible",
+    "expected": [
+      "visible"
+    ]
+  },
+  {
+    "name": "written GFM URL Unicode domains",
+    "content": "https://點看.com/#hidden www.點看.com/#also-hidden https://a_b.點看.com/#still-hidden https://foo_bar.點看/#visible https://點看.com_/#suffix hellohttps://點看.com/#joined",
+    "expected": [
+      "visible",
+      "suffix",
+      "joined"
+    ]
+  },
+  {
+    "name": "written GFM URL protocol and www boundaries",
+    "content": "1https://點看.com/#digit .https://點看.com/#punctuation ]www.點看.com/#www 中https://點看.com/#unicode hellohttps://點看.com/#joined [https://點看.com/#unbalanced\n\n[www.點看.com/#unbalanced-www\n\n\\[https://點看.com/#escaped\n\n\\[www.點看.com/#escaped-www",
+    "expected": [
+      "digit",
+      "punctuation",
+      "www",
+      "unicode",
+      "joined",
+      "unbalanced",
+      "unbalanced-www",
+      "escaped",
+      "escaped-www"
+    ]
+  },
+  {
+    "name": "written GFM URL domain validation",
+    "content": "http://example.com#hidden http://example.com./#also-hidden https://foo.example_/#visible\n-\thttps://foo.example_/#padded\n\n(https://foo.example_/#parenthesized) *https://foo.example_/#emphasized*",
+    "expected": [
+      "visible",
+      "padded",
+      "parenthesized",
+      "emphasized"
+    ]
+  },
+  {
+    "name": "initial BOM before written GFM URL",
+    "content": "﻿https://example.com/#hidden #shown",
+    "expected": [
+      "shown"
+    ]
+  },
+  {
+    "name": "second initial BOM is ordinary text",
+    "content": "﻿﻿https://example.com/#shown",
+    "expected": [
+      "shown"
+    ]
+  },
+  {
+    "name": "mid-document BOM does not start written GFM URL",
+    "content": "before\n\n﻿https://example.com/#shown",
+    "expected": [
+      "shown"
+    ]
+  },
+  {
+    "name": "written URL inside unresolved bracket text",
+    "content": "[text https://點看.com/#inside [more https://example.com/#ascii",
+    "expected": []
+  },
+  {
+    "name": "written URL inside closed unresolved bracket text",
+    "content": "[ https://example.com/#hidden] [x https://example.com/#also-hidden] ![ https://example.com/#image-hidden]",
+    "expected": []
+  },
+  {
+    "name": "separator characters end written URL",
+    "content": "https://點看.com/ #nbsp https://點看.com/ #em-space https://點看.com/\u000b#vertical-tab https://點看.com/\u2028#line-separator https://點看.com/\u2029#paragraph-separator https://點看.com/#nel-hidden",
+    "expected": [
+      "nbsp",
+      "em-space",
+      "vertical-tab",
+      "line-separator",
+      "paragraph-separator"
+    ]
+  },
+  {
+    "name": "written GFM email boundaries",
+    "content": "foo#mail@example.com foo!#second@example.com \u003cfoo#hidden@example.com\u003e foo@example.com/#after",
+    "expected": [
+      "after"
+    ]
+  },
+  {
+    "name": "invalid GFM email local part",
+    "content": "#foo!bar@example.com",
+    "expected": [
+      "foo"
+    ]
+  },
+  {
+    "name": "email after tag hierarchy separator",
+    "content": "#foo/bar@example.com",
+    "expected": [
+      "foo"
+    ]
+  },
+  {
+    "name": "GFM email after Unicode tag",
+    "content": "#中mail@example.com",
+    "expected": [
+      "中"
+    ]
+  },
+  {
+    "name": "email after padded list tag",
+    "content": "-\t#foo/bar@example.com",
+    "expected": [
+      "foo"
+    ]
+  },
+  {
+    "name": "invalid GFM email domain suffix",
+    "content": "#foo/bar@example.com_",
+    "expected": [
+      "foo",
+      "foo/bar"
+    ]
+  },
+  {
+    "name": "escaped punctuation is decoded in GFM email autolinks",
+    "content": "#foo\\+bar@example.com #next\\_item@example.com",
+    "expected": []
+  },
+  {
+    "name": "numeric entity joins GFM email",
+    "content": "#foo\u0026#46;bar@example.com #foo\u0026#64;example.com",
+    "expected": []
+  },
+  {
+    "name": "named entity joins GFM email",
+    "content": "#foo\u0026period;bar@example.com",
+    "expected": []
+  },
+  {
+    "name": "unknown entity does not join GFM email",
+    "content": "#foo\u0026bogus;bar@example.com",
+    "expected": [
+      "foo\u0026bogus"
+    ]
+  },
+  {
+    "name": "email inside emphasis",
+    "content": "_foo@example.com #tag_",
+    "expected": [
+      "tag"
+    ]
+  },
+  {
+    "name": "raw HTML syntax",
+    "content": "\u003cspan data-tag=\"#attribute\"\u003e#text\u003c/span\u003e",
+    "expected": [
+      "text"
+    ]
+  },
+  {
+    "name": "inline math",
+    "content": "$#math$ #plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "currency dollars leave tags visible",
+    "content": "$20,000 #budget and $30,000",
+    "expected": [
+      "budget"
+    ]
+  },
+  {
+    "name": "inline math exact closing run",
+    "content": "$#one$$ #two$ #plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "inline math does not reopen within a dollar run",
+    "content": "$$#math$ #plain",
+    "expected": [
+      "math",
+      "plain"
+    ]
+  },
+  {
+    "name": "inline math after escaped dollar",
+    "content": "\\$$#math$ #plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "display math",
+    "content": "$$\n#math\n$$\n\n#plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "unclosed math flow",
+    "content": "$$meta\n#math",
+    "expected": []
+  },
+  {
+    "name": "unclosed math flow across blocks",
+    "content": "$$meta\n\n#math",
+    "expected": []
+  },
+  {
+    "name": "unclosed math flow in quote",
+    "content": "\u003e $$meta\n\u003e #math",
+    "expected": []
+  },
+  {
+    "name": "flow math stays inside quote",
+    "content": "\u003e $$\n\u003e #math\noutside #plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "flow math spans quote blocks",
+    "content": "\u003e $$\n\u003e #math\n\u003e\n\u003e #still-math\n\u003e $$\noutside #plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "flow math stays inside list item",
+    "content": "- $$\n  #math\n#outside",
+    "expected": [
+      "outside"
+    ]
+  },
+  {
+    "name": "flow math spans list item blank lines",
+    "content": "- $$\n  \n  #math\n  $$\n\n#outside",
+    "expected": [
+      "outside"
+    ]
+  },
+  {
+    "name": "dollar in flow metadata stays text",
+    "content": "$$meta$x\n#plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "math fence inside code is inert",
+    "content": "```text\n$$\n```\n\n#plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "unmatched inline dollar",
+    "content": "text $ #plain",
+    "expected": [
+      "plain"
+    ]
+  },
+  {
+    "name": "formatted text",
+    "content": "**#strong** ~~#strike~~",
+    "expected": [
+      "strong",
+      "strike"
+    ]
+  },
+  {
+    "name": "emphasis is a hard boundary",
+    "content": "#_foo_",
+    "expected": []
+  },
+  {
+    "name": "unmatched underscore",
+    "content": "#_",
+    "expected": [
+      "_"
+    ]
+  },
+  {
+    "name": "intraword underscore",
+    "content": "#foo_bar",
+    "expected": [
+      "foo_bar"
+    ]
+  },
+  {
+    "name": "no length limit",
+    "content": "#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "expected": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  }
+]

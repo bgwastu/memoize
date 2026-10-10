@@ -1,0 +1,49 @@
+name: Prepare release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version, for example 0.1.0
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 25
+    environment: release
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: Scripts/test.sh
+      - name: Build and sign update
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          test -n "$SPARKLE_PRIVATE_KEY"
+          Scripts/release.sh "$RELEASE_VERSION"
+      - name: Exercise packaged app
+        timeout-minutes: 3
+        run: MEMOIZE_SMOKE_EDITOR_ONLY=1 MEMOIZE_DATA_DIR="$(mktemp -d)" build/Memoize.app/Contents/MacOS/Memoize --smoke-test
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Memoize-release
+          path: build/release/*
+          if-no-files-found: error
+      - name: Create draft for review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$RELEASE_VERSION" build/release/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Memoize $RELEASE_VERSION" --generate-notes --draft

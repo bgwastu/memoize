@@ -73,7 +73,7 @@ private struct GeneralSettings: View {
                 Toggle("Show in menu bar",isOn:$model.menuBar)
             }
             Section("Startup") {
-                Toggle("Launch at login",isOn:Binding(get:{ model.login },set:model.setLogin))
+                Toggle("Launch at login",isOn:Binding(get:{ model.login },set:{ model.setLogin($0) }))
                 if let error = model.loginError { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }
             Section {

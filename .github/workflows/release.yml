@@ -46,4 +46,4 @@ jobs:
         run: |
           gh release create "v$RELEASE_VERSION" build/release/* \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Memoize $RELEASE_VERSION" --generate-notes --draft
+            --title "Memoize $RELEASE_VERSION" --notes-file /dev/null --draft

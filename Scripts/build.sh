@@ -9,8 +9,9 @@ version="${2:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Re
 
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/module-cache"
-/usr/bin/swift build --disable-sandbox --cache-path .build/cache -c "$configuration" --product Memoize
-bin="$(/usr/bin/swift build --disable-sandbox --cache-path .build/cache -c "$configuration" --show-bin-path)"
+# Xcode's resource accessors find bundles in Contents/Resources on every supported toolchain.
+/usr/bin/swift build --build-system xcode --disable-sandbox --cache-path .build/cache -c "$configuration" --product Memoize
+bin="$(/usr/bin/swift build --build-system xcode --disable-sandbox --cache-path .build/cache -c "$configuration" --show-bin-path)"
 app="$PWD/build/Memoize.app"
 # Rebuild the bundle so stale resources and test fixtures never ship.
 rm -rf "$app"

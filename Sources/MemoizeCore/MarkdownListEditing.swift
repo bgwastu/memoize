@@ -16,8 +16,8 @@ public enum MarkdownListEditing {
         var column: Int { indent.reduce(0) { $1 == "\t" ? ($0 / 4 + 1) * 4 : $0 + 1 } }
         var contentColumn: Int { (indent + marker + gap).reduce(0) { $1 == "\t" ? ($0 / 4 + 1) * 4 : $0 + 1 } }
         var next: String {
-            let marker = Int(marker.dropLast()).map { String(min($0 + 1,999_999_999)) + marker.suffix(1) } ?? marker
-            return indent + marker + gap + (task ? "[ ] " : "")
+            let nextMarker = Int(marker.dropLast()).map { String(min($0 + 1,999_999_999)) + marker.suffix(1) } ?? marker
+            return indent + nextMarker + gap + (task ? "[ ] " : "")
         }
     }
     private static let prefix = try! NSRegularExpression(pattern:#"^([ \t]*)([-+*]|[0-9]{1,9}[.)])([ \t]+)(?:\[([ xX])\](?:[ \t]+|$))?"#)

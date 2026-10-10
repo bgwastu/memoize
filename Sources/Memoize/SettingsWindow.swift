@@ -92,9 +92,7 @@ private struct MemosSettings: View {
                     .textContentType(.URL).autocorrectionDisabled().disabled(model.busy)
                 SecureField("Access token",text:$model.token,prompt:Text(model.hasSavedToken ? "Saved in Keychain" : "Personal access token"))
                     .disabled(model.busy)
-            } header: { Text("Connection") } footer: {
-                Label("Your token is stored in Keychain.",systemImage:"lock").font(.caption)
-            }
+            } header: { Text("Connection") }
             Section {
                 if model.hasSavedToken {
                     LabeledContent("Account",value:model.account.replacingOccurrences(of:"users/",with:""))
@@ -145,6 +143,7 @@ private struct ShortcutSettings: View {
             ("Shortcuts","keyboard",410,NSHostingController(rootView:ShortcutSettings()))
         ]
         for (title,symbol,height,controller) in panes {
+            controller.title = title
             controller.preferredContentSize = NSSize(width:540,height:height)
             let item = NSTabViewItem(viewController:controller); item.identifier = title; item.label = title
             item.image = NSImage(systemSymbolName:symbol,accessibilityDescription:title)
@@ -157,7 +156,6 @@ private struct ShortcutSettings: View {
         super.tabView(tabView,didSelect:tabViewItem)
         guard let item = tabViewItem else { return }
         UserDefaults.standard.set(item.label,forKey:"settingsPane")
-        view.window?.title = item.label
         if let size = item.viewController?.preferredContentSize { view.window?.setContentSize(size) }
     }
 }
@@ -169,7 +167,6 @@ private struct ShortcutSettings: View {
     private lazy var window: NSWindow = {
         let controller = SettingsController(model:model)
         let window = NSWindow(contentViewController:controller)
-        window.title = controller.tabViewItems[controller.selectedTabViewItemIndex].label
         window.styleMask = [.titled,.closable]; window.toolbarStyle = .preference
         window.setContentSize(controller.tabViewItems[controller.selectedTabViewItemIndex].viewController!.preferredContentSize)
         window.toolbar?.displayMode = .iconAndLabel

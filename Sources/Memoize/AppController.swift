@@ -1509,12 +1509,13 @@ import Sparkle
             while window.contentView?.frame.size != size, ContinuousClock.now < resizeDeadline { try await Task.sleep(for:.milliseconds(20)) }
             guard window.toolbar?.selectedItemIdentifier != nil, window.toolbar?.allowsUserCustomization == false,
                   !window.styleMask.contains(.resizable), !window.styleMask.contains(.miniaturizable),
-                  window.contentView?.frame.size == size,
-                  window.level == editor.panel.level else { throw MemoizeError.message("Settings window did not use native preferences behavior: pane=\(name), size=\(String(describing:window.contentView?.frame.size)), toolbar=\(String(describing:window.toolbar?.selectedItemIdentifier)), level=\(window.level.rawValue), noteLevel=\(editor.panel.level.rawValue).") }
+                  window.contentView?.frame.size == size, window.title.lowercased() == name,
+                  window.level == editor.panel.level else { throw MemoizeError.message("Settings window did not use native preferences behavior: pane=\(name), title=\(window.title), size=\(String(describing:window.contentView?.frame.size)), toolbar=\(String(describing:window.toolbar?.selectedItemIdentifier)), level=\(window.level.rawValue), noteLevel=\(editor.panel.level.rawValue).") }
             try captureSmokeWindow(window,name:"settings-" + name)
         }
         let restored = SettingsWindow(); restored.show()
-        guard (restored.loadedWindow?.contentViewController as? NSTabViewController)?.selectedTabViewItemIndex == 2 else { throw MemoizeError.message("Settings did not restore the last pane.") }
+        guard (restored.loadedWindow?.contentViewController as? NSTabViewController)?.selectedTabViewItemIndex == 2,
+              restored.loadedWindow?.title == "Shortcuts" else { throw MemoizeError.message("Settings did not restore the last pane and its title.") }
         restored.loadedWindow?.orderOut(nil)
         try await smokeAppearance()
         FileHandle.standardOutput.write(Data("Settings passed: native toolbar panes, compact preferences window, pin ordering, remembered pane.\n".utf8))

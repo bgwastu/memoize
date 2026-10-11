@@ -17,7 +17,10 @@ final class HoverToolbar: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var isOpaque: Bool { true }
-    override func draw(_ dirtyRect: NSRect) { NSColor.textBackgroundColor.setFill(); bounds.intersection(dirtyRect).fill() }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        bounds.intersection(dirtyRect).fill()
+    }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }

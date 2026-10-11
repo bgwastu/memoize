@@ -125,6 +125,10 @@ import MemoizeCore
 }
 
 final class WindowBackgroundView: NSView {
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow:newWindow)
+        NativeWindowPrivacy.apply(to:newWindow)
+    }
     override var isOpaque: Bool { true }
     override func draw(_ dirtyRect: NSRect) { NSColor.windowBackgroundColor.setFill(); bounds.intersection(dirtyRect).fill() }
 }

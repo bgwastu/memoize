@@ -6,6 +6,7 @@ import MemoizeCore
 
 extension KeyboardShortcuts.Name {
     static let toggleNote = Self("toggleNote",initial:.init(.x,modifiers:[.option,.command]))
+    static let toggleScreenShareVisibility = Self("toggleScreenShareVisibility",initial:.init(.s,modifiers:[.option,.command]))
 }
 
 @MainActor final class SettingsModel: ObservableObject {
@@ -26,9 +27,17 @@ extension KeyboardShortcuts.Name {
     @Published var menuBar = UserDefaults.standard.object(forKey:"showMenuBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(menuBar,forKey:"showMenuBar"); onMenuBarVisibility?(menuBar) }
     }
+    @Published var hideNotesInScreenShares = UserDefaults.standard.bool(forKey:NativeWindowPrivacy.preferenceKey) {
+        didSet {
+            guard hideNotesInScreenShares != oldValue else { return }
+            UserDefaults.standard.set(hideNotesInScreenShares,forKey:NativeWindowPrivacy.preferenceKey)
+            onScreenSharePrivacyChange?(hideNotesInScreenShares)
+        }
+    }
     @Published var login = SMAppService.mainApp.status == .enabled
     var connect: ((String,String) async throws -> Void)?
     var onMenuBarVisibility: ((Bool) -> Void)?
+    var onScreenSharePrivacyChange: ((Bool) -> Void)?
     var hasSavedToken: Bool {
         guard !account.isEmpty, let entered = try? MemosClient.normalizedServer(server), let saved = try? MemosClient.normalizedServer(savedServer) else { return false }
         return entered == saved
@@ -77,9 +86,14 @@ private struct GeneralSettings: View {
                 if let error = model.loginError { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             }
             Section {
+                Toggle("Hide notes in screen shares",isOn:$model.hideNotesInScreenShares)
+                Text("Keep notes private when sharing your entire screen. Experimental on macOS.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } header: { Text("Screen sharing") }
+            Section {
                 LabeledContent("Memoize",value:Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "")
             }
-        }.formStyle(.grouped).padding(12).frame(width:540,height:370)
+        }.formStyle(.grouped).padding(12).frame(width:540,height:470)
     }
 }
 
@@ -114,9 +128,10 @@ private struct MemosSettings: View {
 private struct ShortcutSettings: View {
     var body: some View {
         Form {
-            Section("Global shortcut") {
+            Section("Global shortcuts") {
                 KeyboardShortcuts.Recorder("Show or hide Memoize",name:.toggleNote)
-                HStack { Spacer(); Button("Restore Default") { KeyboardShortcuts.reset(.toggleNote) }.controlSize(.small) }
+                KeyboardShortcuts.Recorder("Present / toggle shared note",name:.toggleScreenShareVisibility)
+                HStack { Spacer(); Button("Restore Defaults") { KeyboardShortcuts.reset(.toggleNote); KeyboardShortcuts.reset(.toggleScreenShareVisibility) }.controlSize(.small) }
             }
             Section("While writing") {
                 shortcut("New note","⌘N")
@@ -125,7 +140,7 @@ private struct ShortcutSettings: View {
                 shortcut("Search all notes","⇧⌘F")
                 shortcut("Toggle notes list","⌘0")
             }
-        }.formStyle(.grouped).padding(12).frame(width:540,height:410)
+        }.formStyle(.grouped).padding(12).frame(width:540,height:460)
     }
     private func shortcut(_ title: String, _ keys: String) -> some View {
         LabeledContent(title) { Text(keys).monospaced().foregroundStyle(.secondary) }
@@ -138,9 +153,9 @@ private struct ShortcutSettings: View {
         let saved = UserDefaults.standard.string(forKey:"settingsPane")
         tabStyle = .toolbar
         let panes: [(String,String,CGFloat,NSViewController)] = [
-            ("General","gearshape",370,NSHostingController(rootView:GeneralSettings(model:model))),
+            ("General","gearshape",470,NSHostingController(rootView:GeneralSettings(model:model))),
             ("Memos","server.rack",330,NSHostingController(rootView:MemosSettings(model:model))),
-            ("Shortcuts","keyboard",410,NSHostingController(rootView:ShortcutSettings()))
+            ("Shortcuts","keyboard",460,NSHostingController(rootView:ShortcutSettings()))
         ]
         for (title,symbol,height,controller) in panes {
             controller.title = title
@@ -174,7 +189,7 @@ private struct ShortcutSettings: View {
         window.isReleasedWhenClosed = false; window.level = pinned ? .floating : .normal
         window.center(); loadedWindow = window; return window
     }()
-    func show() { NSApp.unhide(nil); NSApp.activate(); window.makeKeyAndOrderFront(nil) }
+    func show() { NativeWindowPrivacy.apply(to:window); NSApp.unhide(nil); NSApp.activate(); window.makeKeyAndOrderFront(nil) }
     func selectPane(_ index: Int) {
         show(); (window.contentViewController as? NSTabViewController)?.selectedTabViewItemIndex = index
     }

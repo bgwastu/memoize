@@ -3,11 +3,6 @@ import QuickLookUI
 import QuartzCore
 import MemoizeCore
 
-final class FloatingPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
 final class SourceTextView: NSTextView {
     lazy var noteFinder = NoteFinder(textView:self)
     override func performTextFinderAction(_ sender: Any?) {
@@ -135,6 +130,14 @@ final class SourceTextView: NSTextView {
     let syncIndicator = SyncIndicator(frame:.zero)
     let toast = EditorToast(frame:.zero)
     let attachmentStrip = AttachmentStrip(frame:.zero)
+    let screenShareToggle = NSButton(title:"Present…",target:nil,action:nil)
+    private(set) var isPresenting = false
+    private var nativeCapturePrivacy = false
+    private var screenIsCaptured = false
+    private(set) var isStartingPresentation = false
+    private(set) var isScreenShareHidden = true
+    private(set) var screenShareError: String?
+    var canToggleScreenShareVisibility: Bool { !isStartingPresentation }
     private let pin = NSButton()
     private(set) var libraryToggle = NSButton()
     private var parsing: Task<Void,Never>?
@@ -160,6 +163,8 @@ final class SourceTextView: NSTextView {
     var onLibrary: (() -> Void)?
     var onDelete: (() -> Void)?
     var onPin: ((Bool) -> Void)?
+    var onScreenShareChange: (() -> Void)?
+    var onScreenShareToggle: (() -> Void)?
     let baseFont = NSFont.monospacedSystemFont(ofSize:14,weight:.regular)
 
     override init() {
@@ -174,6 +179,14 @@ final class SourceTextView: NSTextView {
         if !ProcessInfo.processInfo.arguments.contains("--smoke-test") { panel.setFrameAutosaveName("FloatingNote") }
         setPinned(UserDefaults.standard.object(forKey:"pinned") as? Bool ?? true)
         let content = WindowBackgroundView(); panel.contentView = content
+        screenShareToggle.bezelStyle = .inline; screenShareToggle.isBordered = false
+        screenShareToggle.font = .systemFont(ofSize:11,weight:.medium)
+        screenShareToggle.imagePosition = .imageLeading
+        screenShareToggle.setButtonType(.toggle); screenShareToggle.target = self
+        screenShareToggle.action = #selector(toggleScreenShareVisibility)
+        screenShareToggle.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(screenShareToggle)
+        NSLayoutConstraint.activate([screenShareToggle.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-12),screenShareToggle.topAnchor.constraint(equalTo:content.topAnchor,constant:6),screenShareToggle.heightAnchor.constraint(equalToConstant:22),screenShareToggle.leadingAnchor.constraint(greaterThanOrEqualTo:content.leadingAnchor,constant:84)])
+        updateScreenShareControl()
         let layout = NSStackView(); layout.orientation = .vertical; layout.spacing = 0; layout.alignment = .leading
         layout.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(layout)
         NSLayoutConstraint.activate([layout.leadingAnchor.constraint(equalTo:content.leadingAnchor),layout.trailingAnchor.constraint(equalTo:content.trailingAnchor),layout.topAnchor.constraint(equalTo:content.topAnchor,constant:34),layout.bottomAnchor.constraint(equalTo:content.bottomAnchor)])
@@ -270,8 +283,9 @@ final class SourceTextView: NSTextView {
         attachmentStrip.update([])
     }
     func show() {
+        clampToScreen(panel)
         if NSApp.isHidden { NSApp.unhide(nil) }
-        clampToScreen(panel); NSApp.activate(); panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(textView)
+        NSApp.activate(); panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(textView)
         toolbar.refreshHover()
     }
     func hide() {
@@ -373,12 +387,65 @@ final class SourceTextView: NSTextView {
         let controller = NSViewController()
         let view = QLPreviewView(frame:NSRect(x:0,y:0,width:520,height:400),style:.normal)!
         view.autostarts = false; view.shouldCloseWithWindow = false; view.previewItem = url as NSURL
-        controller.view = view
+        let content = WindowBackgroundView(frame:view.frame)
+        view.autoresizingMask = [.width,.height]; content.addSubview(view)
+        controller.view = content
         let popover = NSPopover(); popover.contentViewController = controller; popover.behavior = .transient; popover.delegate = self
         preview = popover; previewView = view
         popover.show(relativeTo:anchor.bounds,of:anchor,preferredEdge:.maxY)
     }
     func dismissAttachmentPreview() { preview?.close() }
+    @objc func toggleScreenShareVisibility() { onScreenShareToggle?() }
+    func updatePresentation(active: Bool, starting: Bool, includesNote: Bool, error: String?) {
+        isPresenting = active; isStartingPresentation = starting
+        isScreenShareHidden = !includesNote; screenShareError = error
+        updateScreenShareControl(); onScreenShareChange?()
+    }
+    func presentationSnapshot() -> NSImage? {
+        // Copy the visible writing area directly from AppKit, never from the
+        // display capture. The private controls and attachment popovers stay local.
+        scrollView.layoutSubtreeIfNeeded()
+        guard let bitmap = scrollView.bitmapImageRepForCachingDisplay(in:scrollView.bounds) else { return nil }
+        scrollView.effectiveAppearance.performAsCurrentDrawingAppearance {
+            scrollView.cacheDisplay(in:scrollView.bounds,to:bitmap)
+        }
+        let image = NSImage(size:scrollView.bounds.size)
+        image.addRepresentation(bitmap)
+        return image
+    }
+    func updateNativeCapturePrivacy(_ enabled: Bool, captured: Bool) {
+        guard nativeCapturePrivacy != enabled || screenIsCaptured != captured else { return }
+        nativeCapturePrivacy = enabled; screenIsCaptured = captured; updateScreenShareControl()
+    }
+    private func updateScreenShareControl() {
+        if nativeCapturePrivacy {
+            screenShareToggle.isHidden = !screenIsCaptured
+            let title = "Hidden in screen shares"
+            let help = "Experimental entire-screen hiding. macOS does not guarantee capture exclusion; verify the local note and a receiving participant."
+            screenShareToggle.title = title
+            screenShareToggle.image = NSImage(systemSymbolName:"eye.slash",accessibilityDescription:title)
+            screenShareToggle.state = .off; screenShareToggle.isEnabled = false
+            screenShareToggle.toolTip = help; screenShareToggle.setAccessibilityLabel(title)
+            screenShareToggle.setAccessibilityHelp(help)
+            return
+        }
+        screenShareToggle.isHidden = false
+        let title: String
+        if isStartingPresentation { title = "Starting…" }
+        else if screenShareError != nil { title = "Retry presentation" }
+        else if !isPresenting { title = "Present…" }
+        else { title = isScreenShareHidden ? "Private note" : "Note shared" }
+        screenShareToggle.title = title
+        screenShareToggle.image = NSImage(systemSymbolName:screenShareError != nil ? "exclamationmark.triangle" : !isPresenting ? "rectangle.on.rectangle" : isScreenShareHidden ? "eye.slash" : "eye",accessibilityDescription:title)
+        screenShareToggle.state = isPresenting && !isScreenShareHidden ? .on : .off
+        screenShareToggle.isEnabled = canToggleScreenShareVisibility
+        screenShareToggle.contentTintColor = screenShareError != nil ? .systemOrange : isPresenting ? .controlAccentColor : .secondaryLabelColor
+        let help = screenShareError ?? (!isPresenting
+            ? "Choose a screen, then share the Memoize Presentation window in Meet. Entire-screen sharing includes your local notes."
+            : "\(isScreenShareHidden ? "Show" : "Hide") this note in the Memoize Presentation window. Your local note stays readable. In Meet, share that window rather than your entire screen.")
+        screenShareToggle.toolTip = help; screenShareToggle.setAccessibilityLabel(title)
+        screenShareToggle.setAccessibilityHelp(help)
+    }
     func popoverDidClose(_ notification: Notification) {
         previewView?.close(); previewView = nil; preview = nil
     }

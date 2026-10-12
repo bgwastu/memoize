@@ -126,8 +126,10 @@ final class SourceTextView: NSTextView {
     let panel: FloatingPanel
     let textView: SourceTextView
     let scrollView = NSScrollView()
+    let header = HoverHeader(frame:.zero)
     let toolbar = HoverToolbar(frame:.zero)
     let syncIndicator = SyncIndicator(frame:.zero)
+    let updatedLabel = NSTextField(labelWithString:"")
     let toast = EditorToast(frame:.zero)
     let attachmentStrip = AttachmentStrip(frame:.zero)
     let screenShareToggle = NSButton(title:"Present…",target:nil,action:nil)
@@ -178,14 +180,18 @@ final class SourceTextView: NSTextView {
         if !ProcessInfo.processInfo.arguments.contains("--smoke-test") { panel.setFrameAutosaveName("FloatingNote") }
         setPinned(UserDefaults.standard.object(forKey:"pinned") as? Bool ?? true)
         let content = WindowBackgroundView(); panel.contentView = content
+        header.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(header)
+        NSLayoutConstraint.activate([header.leadingAnchor.constraint(equalTo:content.leadingAnchor),header.trailingAnchor.constraint(equalTo:content.trailingAnchor),header.topAnchor.constraint(equalTo:content.topAnchor),header.heightAnchor.constraint(equalToConstant:34)])
         screenShareToggle.bezelStyle = .inline; screenShareToggle.isBordered = false
         screenShareToggle.font = .systemFont(ofSize:11,weight:.medium)
         screenShareToggle.imagePosition = .imageLeading
         screenShareToggle.setButtonType(.toggle); screenShareToggle.target = self
         screenShareToggle.action = #selector(toggleScreenShareVisibility)
-        screenShareToggle.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(screenShareToggle)
-        NSLayoutConstraint.activate([screenShareToggle.trailingAnchor.constraint(equalTo:content.trailingAnchor,constant:-12),screenShareToggle.topAnchor.constraint(equalTo:content.topAnchor,constant:6),screenShareToggle.heightAnchor.constraint(equalToConstant:22),screenShareToggle.leadingAnchor.constraint(greaterThanOrEqualTo:content.leadingAnchor,constant:84)])
+        screenShareToggle.translatesAutoresizingMaskIntoConstraints = false; header.glass.addSubview(screenShareToggle)
+        NSLayoutConstraint.activate([screenShareToggle.trailingAnchor.constraint(equalTo:header.glass.trailingAnchor,constant:-12),screenShareToggle.topAnchor.constraint(equalTo:header.glass.topAnchor,constant:6),screenShareToggle.heightAnchor.constraint(equalToConstant:22),screenShareToggle.leadingAnchor.constraint(greaterThanOrEqualTo:header.glass.leadingAnchor,constant:84)])
+        header.onVisibilityChange = { [weak self] revealed in self?.updateHeaderVisibility(revealed:revealed) }
         updateScreenShareControl()
+        updateHeaderVisibility(revealed:false)
         let layout = NSStackView(); layout.orientation = .vertical; layout.spacing = 0; layout.alignment = .leading
         layout.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(layout)
         NSLayoutConstraint.activate([layout.leadingAnchor.constraint(equalTo:content.leadingAnchor),layout.trailingAnchor.constraint(equalTo:content.trailingAnchor),layout.topAnchor.constraint(equalTo:content.topAnchor,constant:34),layout.bottomAnchor.constraint(equalTo:content.bottomAnchor)])
@@ -219,6 +225,13 @@ final class SourceTextView: NSTextView {
         // The status is a sibling of the glass, so hiding controls never hides it.
         toolbar.addSubview(syncIndicator); syncIndicator.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([syncIndicator.leadingAnchor.constraint(equalTo:toolbar.leadingAnchor,constant:12),syncIndicator.centerYAnchor.constraint(equalTo:toolbar.centerYAnchor,constant:-3),syncIndicator.widthAnchor.constraint(equalToConstant:24),syncIndicator.heightAnchor.constraint(equalToConstant:24)])
+        updatedLabel.font = .systemFont(ofSize:11); updatedLabel.textColor = .secondaryLabelColor
+        updatedLabel.lineBreakMode = .byTruncatingTail; updatedLabel.maximumNumberOfLines = 1
+        updatedLabel.usesSingleLineMode = true; updatedLabel.cell?.truncatesLastVisibleLine = true
+        updatedLabel.setContentCompressionResistancePriority(.defaultLow,for:.horizontal)
+        updatedLabel.translatesAutoresizingMaskIntoConstraints = false; toolbar.addSubview(updatedLabel)
+        NSLayoutConstraint.activate([updatedLabel.leadingAnchor.constraint(equalTo:syncIndicator.trailingAnchor,constant:4),updatedLabel.centerYAnchor.constraint(equalTo:syncIndicator.centerYAnchor),updatedLabel.trailingAnchor.constraint(lessThanOrEqualTo:toolbar.trailingAnchor,constant:-130)])
+        setLastUpdated(nil)
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow,for:.horizontal); footer.addArrangedSubview(spacer)
         libraryToggle = button("list.bullet",help:"Show notes (⌘0)",action:#selector(library))
         libraryToggle.setButtonType(.toggle)
@@ -285,7 +298,7 @@ final class SourceTextView: NSTextView {
         clampToScreen(panel)
         if NSApp.isHidden { NSApp.unhide(nil) }
         NSApp.activate(); panel.makeKeyAndOrderFront(nil); panel.makeFirstResponder(textView)
-        toolbar.refreshHover()
+        header.refreshHover(); toolbar.refreshHover()
     }
     func hide() {
         if let onHide { onHide() } else { panel.orderOut(nil) }
@@ -427,6 +440,7 @@ final class SourceTextView: NSTextView {
         nativeCapturePrivacy = enabled; screenIsCaptured = captured; updateScreenShareControl()
     }
     private func updateScreenShareControl() {
+        header.forceReveal = isPresenting || isStartingPresentation || screenShareError != nil || (nativeCapturePrivacy && screenIsCaptured)
         if nativeCapturePrivacy {
             screenShareToggle.isHidden = !screenIsCaptured
             let title = "Hidden in screen shares"
@@ -477,6 +491,32 @@ final class SourceTextView: NSTextView {
     @objc private func library() { onLibrary?() }
     @objc private func newNote() { onNew?() }
     @objc private func deleteNote() { onDelete?() }
+    func updateHeaderVisibility(revealed: Bool) {
+        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(type)?.isHidden = !revealed
+        }
+    }
+    func setLastUpdated(_ date: Date?) {
+        if let date {
+            let compact = Calendar.current.isDateInToday(date)
+                ? "Today, " + date.formatted(date:.omitted,time:.shortened)
+                : Calendar.current.isDate(date,equalTo:Date(),toGranularity:.year)
+                    ? date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+                    : date.formatted(date:.abbreviated,time:.shortened)
+            let detail = "Last updated " + date.formatted(date:.complete,time:.shortened)
+            if updatedLabel.stringValue != compact { updatedLabel.stringValue = compact }
+            if updatedLabel.toolTip != detail { updatedLabel.toolTip = detail }
+            updatedLabel.setAccessibilityLabel(detail)
+            updatedLabel.setAccessibilityValue(compact)
+        } else {
+            let compact = "Draft"
+            let detail = "Draft — not saved yet"
+            if updatedLabel.stringValue != compact { updatedLabel.stringValue = compact }
+            if updatedLabel.toolTip != detail { updatedLabel.toolTip = detail }
+            updatedLabel.setAccessibilityLabel(detail)
+            updatedLabel.setAccessibilityValue(compact)
+        }
+    }
 }
 
 @MainActor func clampToScreen(_ window: NSWindow) {

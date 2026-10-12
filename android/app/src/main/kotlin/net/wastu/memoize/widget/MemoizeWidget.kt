@@ -104,8 +104,8 @@ class MemoizeWidget : GlanceAppWidget() {
 private fun NotesWidgetContent(notes: List<WidgetRow>, tag: String?) {
     val context = LocalContext.current
     val columns = if (LocalSize.current.width >= 320.dp && context.resources.configuration.fontScale < 1.5f) 2 else 1
-    // Reserve the header/Add region; body previews need more room as the system text size grows.
-    val previewHeight = LocalSize.current.height - 152.dp
+    // Only the header is fixed; Add scrolls with the notes.
+    val previewHeight = LocalSize.current.height - 80.dp
     val compact = previewHeight < (108 * context.resources.configuration.fontScale).dp
     val rows = remember(notes, columns) { notes.chunked(columns) }
     Scaffold {
@@ -117,35 +117,34 @@ private fun NotesWidgetContent(notes: List<WidgetRow>, tag: String?) {
                 if (tag != null) Text("#$tag", maxLines = 1, modifier = GlanceModifier.defaultWeight(),
                     style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp))
             }
-            if (notes.isEmpty()) {
-                Box(GlanceModifier.fillMaxWidth().defaultWeight(), contentAlignment = Alignment.Center) {
-                    Text(context.getString(if (tag == null) R.string.widget_empty else R.string.widget_empty_tag),
-                        style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 14.sp))
+            LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
+                if (notes.isEmpty()) item(itemId = -2L) {
+                    Box(GlanceModifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                        Text(context.getString(if (tag == null) R.string.widget_empty else R.string.widget_empty_tag),
+                            style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 14.sp))
+                    }
                 }
-            } else {
-                LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
-                    items(rows, itemId = { stableRowId(it.first().id) }) { row ->
-                        Row(GlanceModifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                            row.forEachIndexed { index, note ->
-                                if (index > 0) Spacer(GlanceModifier.width(8.dp))
-                                NoteWidgetCard(note, compact, GlanceModifier.defaultWeight())
-                            }
-                            if (row.size < columns) {
-                                Spacer(GlanceModifier.width(8.dp))
-                                Spacer(GlanceModifier.defaultWeight())
-                            }
+                items(rows, itemId = { stableRowId(it.first().id) }) { row ->
+                    Row(GlanceModifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        row.forEachIndexed { index, note ->
+                            if (index > 0) Spacer(GlanceModifier.width(8.dp))
+                            NoteWidgetCard(note, compact, GlanceModifier.defaultWeight())
+                        }
+                        if (row.size < columns) {
+                            Spacer(GlanceModifier.width(8.dp))
+                            Spacer(GlanceModifier.defaultWeight())
                         }
                     }
                 }
-            }
-
-            // A separate footer keeps the Add target outside the scrolling collection at every size.
-            Row(GlanceModifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
-                Spacer(GlanceModifier.defaultWeight())
-                SquareIconButton(ImageProvider(R.drawable.ic_add), context.getString(R.string.widget_add),
-                    onClick = actionStartActivity(addIntent(context)), modifier = GlanceModifier.size(56.dp),
-                    backgroundColor = GlanceTheme.colors.primaryContainer,
-                    contentColor = GlanceTheme.colors.onPrimaryContainer)
+                item(itemId = -3L) {
+                    Row(GlanceModifier.fillMaxWidth().height(72.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(GlanceModifier.defaultWeight())
+                        SquareIconButton(ImageProvider(R.drawable.ic_add), context.getString(R.string.widget_add),
+                            onClick = actionStartActivity(addIntent(context)), modifier = GlanceModifier.size(56.dp),
+                            backgroundColor = GlanceTheme.colors.primaryContainer,
+                            contentColor = GlanceTheme.colors.onPrimaryContainer)
+                    }
+                }
             }
         }
     }

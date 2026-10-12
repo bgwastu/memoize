@@ -1,5 +1,46 @@
 import AppKit
 
+/// The top hover strip hides the heading and window controls until hovered.
+final class HoverHeader: NSView {
+    let glass = NSGlassEffectView()
+    private var tracking: NSTrackingArea?
+    private var hovered = false
+    var forceReveal = false { didSet { updateVisibility() } }
+    var onVisibilityChange: ((Bool) -> Void)?
+    var isRevealed: Bool { !glass.isHidden }
+
+    override init(frame: NSRect) {
+        super.init(frame:frame)
+        glass.cornerRadius = 0; glass.style = .regular; glass.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(glass)
+        NSLayoutConstraint.activate([glass.leadingAnchor.constraint(equalTo:leadingAnchor),glass.trailingAnchor.constraint(equalTo:trailingAnchor),glass.topAnchor.constraint(equalTo:topAnchor),glass.bottomAnchor.constraint(equalTo:bottomAnchor)])
+        updateVisibility()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        bounds.intersection(dirtyRect).fill()
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect:.zero,options:[.mouseEnteredAndExited,.activeAlways,.inVisibleRect],owner:self,userInfo:nil)
+        addTrackingArea(area); tracking = area
+        hovered = window.map { !$0.isMiniaturized && $0.isVisible && bounds.contains(convert($0.mouseLocationOutsideOfEventStream,from:nil)) } ?? false
+        updateVisibility()
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; updateVisibility() }
+    override func mouseExited(with event: NSEvent) { hovered = false; updateVisibility() }
+    func refreshHover() { updateTrackingAreas() }
+    private func updateVisibility() {
+        let revealed = hovered || forceReveal
+        glass.isHidden = !revealed
+        onVisibilityChange?(revealed)
+    }
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with event: NSEvent) { window?.performDrag(with:event) }
+}
 /// The hover target keeps its size when the controls disappear.
 final class HoverToolbar: NSView {
     let glass = NSGlassEffectView()

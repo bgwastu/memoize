@@ -116,10 +116,10 @@ import ScreenCaptureKit
             let namespace = UserDefaults.standard.string(forKey:"namespace") ?? "local"
             try await openStore(namespace:namespace)
             let presentationReady = ProcessInfo.processInfo.arguments.contains("--presentation-ready")
-            if !presentationReady { library.show() }
-            if let id = try await store?.metadata("selected"), all.contains(where:{ $0.id == id }) { openNote(id,show:false) }
-            else if let id = all.first?.id { openNote(id,show:false) }
-            else { newNote(show:false) }
+            let showNote = !presentationReady
+            if let id = try await store?.metadata("selected"), all.contains(where:{ $0.id == id }) { openNote(id,show:showNote) }
+            else if let id = all.first?.id { openNote(id,show:showNote) }
+            else { newNote(show:showNote,notify:false) }
             await resumeConnection()
             if !presentationReady, UserDefaults.standard.string(forKey:"namespace") == nil { settings.show() }
         } catch {
@@ -296,6 +296,7 @@ import ScreenCaptureKit
         else if hasPendingSync || (!temporary && current?.dirty == true) { editor.syncIndicator.set(.pending,detail:"Saved on this Mac. Waiting to sync.") }
         else { editor.syncIndicator.set(syncState,detail:statusText) }
         library.status.stringValue = ["Saved on this Mac","All changes synced","Syncing…"].contains(statusText) ? "" : statusText
+        editor.setLastUpdated(temporary ? nil : current?.modified)
     }
     private func edited(_ text: String) {
         guard var note = current else { return }
@@ -309,6 +310,8 @@ import ScreenCaptureKit
             note.attachments += draftAttachments.values.filter { image in
                 text.contains("/file/" + image.name) && !note.attachments.contains(where:{ $0.name == image.name })
             }
+        } else if !temporary, !sameSource(note.content,text) {
+            note.modified = Date()
         }
         note.content = text; current = note; cache[note.id] = note
         editGeneration += 1

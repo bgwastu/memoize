@@ -1,5 +1,7 @@
 package net.wastu.memoize.ui
 
+import android.content.Context
+import androidx.core.content.edit
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -27,6 +29,18 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.floor
 import kotlin.math.max
+
+private const val PREFERENCES_NAME = "notes_layout"
+private const val KEY_PREFERRED_COLUMNS = "preferred_columns"
+
+internal fun loadPreferredColumns(context: Context): Int =
+    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        .getInt(KEY_PREFERRED_COLUMNS, 0)
+
+internal fun savePreferredColumns(context: Context, columns: Int) {
+    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        .edit { putInt(KEY_PREFERRED_COLUMNS, columns) }
+}
 
 internal fun noteGridCapacity(widthDp: Float, fontScale: Float): Int =
     floor((widthDp - 32f + 12f) / (160f * max(fontScale, 1f) + 12f)).toInt().coerceIn(1, 4)

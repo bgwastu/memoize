@@ -21,12 +21,12 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
+import androidx.compose.foundation.lazy.staggeredgrid.items
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -62,7 +62,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -118,11 +123,31 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
     var attachmentType by rememberSaveable { mutableStateOf(AttachmentFilter.ANY.name) }
     var lifecycle by rememberSaveable { mutableStateOf(NoteState.NORMAL.name) }
     var sortOrder by rememberSaveable { mutableStateOf(NoteSort.NEWEST.name) }
-    var preferredColumns by rememberSaveable { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    var preferredColumns by rememberSaveable { mutableIntStateOf(loadPreferredColumns(context)) }
+    val updateColumns: (Int) -> Unit = { count ->
+        preferredColumns = count
+        savePreferredColumns(context, count)
+    }
     var gridCapacity by remember { mutableIntStateOf(1) }
     var displayedColumns by remember { mutableIntStateOf(1) }
-    val listState = rememberLazyGridState()
-    val searchListState = rememberLazyGridState()
+    val listState = rememberLazyStaggeredGridState()
+    val searchListState = rememberLazyStaggeredGridState()
+    var expandedCreateButton by remember { mutableStateOf(true) }
+    val createButtonScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput) {
+                    if (available.y < -1f) expandedCreateButton = false
+                    else if (available.y > 1f) expandedCreateButton = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
+    LaunchedEffect(listState.canScrollBackward) {
+        if (!listState.canScrollBackward) expandedCreateButton = true
+    }
     val searchState = rememberSearchBarState()
     val snackbar = remember { SnackbarHostState() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -220,7 +245,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             }
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Scaffold(
-                modifier = Modifier.widthIn(max = 840.dp).fillMaxSize(),
+                modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().nestedScroll(createButtonScroll),
                 topBar = {
                     androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.surface) {
                         Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
@@ -253,17 +278,18 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                             }
                         }
                     }, icon = { AppIcon(R.drawable.ic_add) }, text = { Text("New note") },
+                        expanded = expandedCreateButton,
                         modifier = Modifier.semantics { contentDescription = "Add note" })
                 },
             ) { padding ->
                 if (searchState.currentValue == SearchBarValue.Collapsed)
                     NotesList(results, filter, listState, padding, open, clearSearch, resetFilters, chips,
-                        preferredColumns, { preferredColumns = it }, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns })
+                        preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns })
             }
             }
             ExpandedFullScreenSearchBar(searchState, inputField = input) {
                 NotesList(results, filter, searchListState, PaddingValues(), open, clearSearch, resetFilters, chips,
-                    preferredColumns, { preferredColumns = it }, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns }, prefix = {
+                    preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns }, prefix = {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
                         if (syncStatus.needsAuthentication) TextButton(onClick = reconnect) { Text("Reconnect") }
                     }
@@ -273,7 +299,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
     }
     if (filters) FilterSheet(notes, filter, onDismiss = { filters = false }, onChange = {
         tag = it.tag; attachmentType = it.attachments.name; lifecycle = it.state.name; sortOrder = it.sort.name
-    }, columnsContent = { NoteColumnChoices(displayedColumns, gridCapacity) { preferredColumns = it } })
+    }, columnsContent = { NoteColumnChoices(displayedColumns, gridCapacity, updateColumns) })
 }
 
 @Composable
@@ -298,7 +324,7 @@ private fun CompactFilterChip(label: String, removeDescription: String, onClear:
 }
 
 @Composable
-private fun NotesList(results: List<NoteResult>, filter: NoteFilter, listState: LazyGridState,
+private fun NotesList(results: List<NoteResult>, filter: NoteFilter, listState: LazyStaggeredGridState,
     padding: PaddingValues, onOpen: (NoteResult) -> Unit, onClearSearch: () -> Unit, onResetFilters: () -> Unit,
     chips: @Composable () -> Unit, preferredColumns: Int, onColumnsChange: (Int) -> Unit,
     onLayout: (Int, Int) -> Unit, prefix: (@Composable () -> Unit)? = null) {
@@ -342,16 +368,16 @@ private fun NotesList(results: List<NoteResult>, filter: NoteFilter, listState: 
         val maximum = noteGridCapacity(width, fontScale)
         val columns = noteGridColumns(preferredColumns, width, fontScale)
         SideEffect { onLayout(maximum, columns) }
-        LazyVerticalGrid(columns = GridCells.Fixed(columns),
+        LazyVerticalStaggeredGrid(columns = StaggeredGridCells.Fixed(columns),
             modifier = Modifier.fillMaxSize().testTag("notes-grid").noteGridPinch(columns, maximum, onColumnsChange)
                 .semantics { testTagsAsResourceId = true; stateDescription = "$columns columns, maximum $maximum" }.consumeWindowInsets(padding),
             state = listState, horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(
+            verticalItemSpacing = 12.dp, contentPadding = PaddingValues(
                 start = padding.calculateLeftPadding(direction) + 16.dp, end = padding.calculateRightPadding(direction) + 16.dp,
                 top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 104.dp)) {
-            prefix?.let { item(key = "notes-actions", span = { GridItemSpan(maxLineSpan) }) { it() } }
-            if (filtered) item(key = "active-filters", span = { GridItemSpan(maxLineSpan) }) { chips() }
-            if (query.isNotEmpty() || filtered) item(key = "notes-context", span = { GridItemSpan(maxLineSpan) }) {
+            prefix?.let { action -> item(key = "notes-actions", span = StaggeredGridItemSpan.FullLine) { action() } }
+            if (filtered) item(key = "active-filters", span = StaggeredGridItemSpan.FullLine) { chips() }
+            if (query.isNotEmpty() || filtered) item(key = "notes-context", span = StaggeredGridItemSpan.FullLine) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(when { query.isNotEmpty() -> "Search results"; filter.state == NoteState.ARCHIVED -> "Archived notes"; else -> "Filtered notes" },
                         Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.labelLarge,

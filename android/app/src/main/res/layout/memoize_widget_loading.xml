@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="@color/widget_preview_background"
+    tools:ignore="Overdraw">
+    <!-- Launcher RemoteViews has no Activity window background; the lint theme inference does not apply. -->
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="@string/app_name" android:textSize="18sp" android:textStyle="bold"
+        android:textColor="@color/widget_preview_on_surface" />
+    <TextView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:gravity="center" android:text="@string/widget_description"
+        android:textColor="@color/widget_preview_secondary" />
+    <ImageView android:layout_width="56dp" android:layout_height="56dp" android:layout_gravity="end"
+        android:src="@drawable/ic_add" android:contentDescription="@string/widget_add"
+        android:tint="@color/widget_preview_on_surface"
+        android:padding="16dp" android:background="@color/widget_preview_add" />
+</LinearLayout>

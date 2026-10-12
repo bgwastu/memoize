@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Canonical unmasked Mac paper/strokes from macos/Scripts/make-icon.swift.
+     Inset the paper so its corners have breathing room under launcher masks. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="1024" android:viewportHeight="1024">
+    <group android:pivotX="512" android:pivotY="512" android:scaleX="0.8" android:scaleY="0.8">
+    <path android:fillColor="#F2FCFCFC"
+        android:pathData="M300,208H724A42,42 0,0 1,766 250V774A42,42 0,0 1,724 816H300A42,42 0,0 1,258 774V250A42,42 0,0 1,300 208Z" />
+    <path android:strokeColor="#CC54619C" android:strokeWidth="32"
+        android:strokeLineCap="round" android:pathData="M358,370H640 M358,499H640 M358,628H530" />
+    </group>
+</vector>

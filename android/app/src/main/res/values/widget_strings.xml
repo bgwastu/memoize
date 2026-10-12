@@ -1,0 +1,6 @@
+<resources>
+    <string name="widget_description">Recent notes, ready offline</string>
+    <string name="widget_add">Add note</string>
+    <string name="widget_empty">Your notes will appear here</string>
+    <string name="widget_empty_tag">No notes with this tag</string>
+</resources>

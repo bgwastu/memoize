@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Kotlin 2.4.21 fully supports Gradle through 9.7.0. Keep the compatible
+         stable wrapper instead of 9.8.1 suggested by this freshness detector.
+         https://kotlinlang.org/docs/gradle-configure-project.html
+         Recheck the table when updating Kotlin. API/deprecation checks stay on. -->
+    <issue id="AndroidGradlePluginVersion">
+        <ignore path="**/gradle-wrapper.properties" />
+    </issue>
+</lint>

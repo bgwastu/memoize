@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The existing Mac icon's indigo gradient continues behind the adaptive mask. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient android:angle="270" android:startColor="#57619E" android:endColor="#303B66" />
+</shape>

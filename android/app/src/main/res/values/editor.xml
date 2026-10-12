@@ -1,0 +1,6 @@
+<resources>
+    <item name="note_source" type="id" />
+    <style name="Widget.Memoize.Source" parent="android:style/Widget.Material.EditText">
+        <item name="android:allowUndo">false</item>
+    </style>
+</resources>

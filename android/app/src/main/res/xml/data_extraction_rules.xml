@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Credentials live in noBackupFilesDir and downloads in cacheDir: Android
+         always excludes both. Restore durable notes/originals and nonsecret
+         account/widget configuration; recreate background work after reconnect. -->
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <include domain="database" path="memoize.db" />
+        <include domain="file" path="accounts" />
+        <include domain="file" path="datastore/account.preferences_pb" />
+        <include domain="file" path="datastore/notes-widgets.preferences_pb" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="database" path="memoize.db" />
+        <include domain="file" path="accounts" />
+        <include domain="file" path="datastore/account.preferences_pb" />
+        <include domain="file" path="datastore/notes-widgets.preferences_pb" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,16 @@
+<resources>
+    <style name="Theme.Memoize" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/system_surface_light</item>
+        <item name="android:windowSplashScreenBackground">@android:color/system_surface_light</item>
+        <item name="android:colorBackground">@android:color/system_surface_light</item>
+        <item name="android:textColorPrimary">@android:color/system_on_surface_light</item>
+        <item name="android:textColorSecondary">@android:color/system_on_surface_variant_light</item>
+        <item name="android:colorAccent">@android:color/system_primary_light</item>
+        <item name="android:colorControlNormal">@android:color/system_on_surface_light</item>
+        <item name="android:colorControlActivated">@android:color/system_primary_light</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+</resources>

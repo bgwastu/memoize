@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Canonical Mac paper, with exact 32px rounded stroke cutouts:
+     x342..656 for the first two lines and x342..546 for the third. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="1024" android:viewportHeight="1024">
+    <group android:pivotX="512" android:pivotY="512" android:scaleX="0.8" android:scaleY="0.8">
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+        android:pathData="M300,208H724A42,42 0,0 1,766 250V774A42,42 0,0 1,724 816H300A42,42 0,0 1,258 774V250A42,42 0,0 1,300 208Z M342,370A16,16 0,0 1,358 354H640A16,16 0,0 1,656 370A16,16 0,0 1,640 386H358A16,16 0,0 1,342 370Z M342,499A16,16 0,0 1,358 483H640A16,16 0,0 1,656 499A16,16 0,0 1,640 515H358A16,16 0,0 1,342 499Z M342,628A16,16 0,0 1,358 612H530A16,16 0,0 1,546 628A16,16 0,0 1,530 644H358A16,16 0,0 1,342 628Z" />
+    </group>
+</vector>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/memoize_widget_loading"
+    android:previewLayout="@layout/memoize_widget_loading"
+    android:configure="net.wastu.memoize.widget.WidgetConfigurationActivity"
+    android:widgetFeatures="reconfigurable|configuration_optional"
+    android:minWidth="180dp"
+    android:minHeight="240dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="200dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="3"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

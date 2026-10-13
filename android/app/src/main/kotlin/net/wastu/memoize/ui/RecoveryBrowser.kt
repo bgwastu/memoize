@@ -13,6 +13,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,10 +64,25 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
         if (selectedId != null) { selectedId = null; error = null } else onDismiss()
     }
     BackHandler { back() }
-    Dialog(onDismissRequest = ::back, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize().safeDrawingPadding().imePadding(), color = MaterialTheme.colorScheme.surface) {
-            Scaffold(contentWindowInsets = WindowInsets(0), topBar = {
+    Dialog(onDismissRequest = ::back, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        val view = LocalView.current
+        val surface = MaterialTheme.colorScheme.surface
+        val lightBars = surface.luminance() > 0.5f
+        SideEffect {
+            (view.parent as? DialogWindowProvider)?.window?.let { window ->
+                // The recovery dialog owns a separate window; Activity settings
+                // do not remove its three-button navigation contrast scrim.
+                window.isNavigationBarContrastEnforced = false
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = lightBars
+                    isAppearanceLightNavigationBars = lightBars
+                }
+            }
+        }
+        Surface(Modifier.fillMaxSize().imePadding(), color = surface) {
+            Scaffold(topBar = {
                 TopAppBar(title = { Text(if (selectedId == null) "Recovery versions" else "Saved version") },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = surface, scrolledContainerColor = surface),
                     navigationIcon = {
                         IconButton(onClick = ::back, enabled = !restoring) {
                             AppIcon(if (selectedId == null) R.drawable.ic_close else R.drawable.ic_back,
@@ -71,8 +90,8 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                         }
                     })
             }, bottomBar = {
-                if (selected != null) Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (selected != null) Surface(color = surface) {
+                    Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Your current version is kept in recovery before restoring.",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(enabled = !restoring, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), onClick = {
@@ -96,7 +115,7 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                     }
                 }
             }) { padding ->
-                Column(Modifier.padding(padding).fillMaxSize().widthIn(max = 840.dp),
+                Column(Modifier.padding(padding).consumeWindowInsets(padding).fillMaxSize().widthIn(max = 840.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     error?.let { message ->
                         Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp),

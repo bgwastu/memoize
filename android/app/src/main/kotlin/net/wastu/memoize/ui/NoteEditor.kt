@@ -261,12 +261,6 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
             navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", !leaving, close) }, actions = {
             IconAction(R.drawable.ic_more, "Note options") { menu = true }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Indent") }, leadingIcon = { AppIcon(R.drawable.ic_format_indent_increase) },
-                    enabled = !leaving && state.commandReady && listIndent(state.text, state.selection, false) != null,
-                    onClick = { menu = false; state.indent(false) })
-                DropdownMenuItem(text = { Text("Outdent") }, leadingIcon = { AppIcon(R.drawable.ic_format_indent_decrease) },
-                    enabled = !leaving && state.commandReady && listIndent(state.text, state.selection, true) != null,
-                    onClick = { menu = false; state.indent(true) })
                 DropdownMenuItem(text = { Text(if (note.state == NoteState.NORMAL) "Archive" else "Unarchive") }, onClick = {
                     menu = false
                     leaving = true

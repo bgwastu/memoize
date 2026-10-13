@@ -219,6 +219,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     private var currentConnection: InputConnection? = null
     private var presentation: SourcePresentation? = null
     private var styled: Pair<DisplayStyles, SourcePalette>? = null
+    private var styledSelection: TextRange? = null
     private val derivedSpans = ArrayList<Any>()
     private data class Change(val start: Int, val removed: String, var inserted: String = "", val continueOnNewline: Boolean)
     private val changes = ArrayDeque<Change>()
@@ -426,6 +427,11 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
         watchBuffer()
         refreshRevision()
         val composition = composing()
+        // Rebuild derived drawing spans only after native input has settled.
+        // Never disturb an active batch or composing buffer to reveal punctuation.
+        if (!nativeBatch && composition == null && styledSelection != range()) {
+            styled?.let { style(it.first, it.second) }
+        }
         if (!replaying && !nativeBatch) history.finish(range(), composition != null)
         val result = layout
         val top = (scrollY - totalPaddingTop).coerceAtLeast(0)
@@ -619,14 +625,19 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
         }
     }
     fun style(display: DisplayStyles, palette: SourcePalette) {
-        if (display.input !== revision || styled == (display to palette)) return
+        if (display.input !== revision || (styled == (display to palette) && styledSelection == range())) return
         val body = text ?: return
         decorating = true
         try {
             derivedSpans.forEach(body::removeSpan)
             derivedSpans.clear()
             for (styledRange in display.ranges) {
-                val spans = sourceStyleSpans(styledRange.style, palette)
+                val spans = if (styledRange.style == SourceStyle.SYNTAX) {
+                    val marker = styledRange.range
+                    val nearby = selectionStart >= 0 && selectionEnd >= 0 &&
+                        minOf(selectionStart, selectionEnd) <= marker.end && maxOf(selectionStart, selectionEnd) >= marker.start
+                    listOf(ForegroundColorSpan(if (nearby) presentation?.text ?: palette.syntax else palette.syntax), SourceSyntaxSpan())
+                } else sourceStyleSpans(styledRange.style, palette)
                 spans.forEach { span ->
                     body.setSpan(span, styledRange.range.start, styledRange.range.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     derivedSpans += span
@@ -640,6 +651,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                 derivedSpans += span
             }
             styled = display to palette
+            styledSelection = range()
         } finally { decorating = false }
     }
 

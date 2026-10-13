@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="originals" path="accounts/" />
     <cache-path name="cached" path="accounts/" />
+    <cache-path name="shared_notes" path="shared-notes/" />
 </paths>

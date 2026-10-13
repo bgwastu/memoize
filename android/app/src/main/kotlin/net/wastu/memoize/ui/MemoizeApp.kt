@@ -1,5 +1,17 @@
 package net.wastu.memoize.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
@@ -61,6 +73,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -116,6 +130,9 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
     val query by remember { derivedStateOf { queryState.text.toString() } }
     var selectedId by rememberSaveable(notes.account) { mutableStateOf<String?>(null) }
     var editorKey by rememberSaveable(notes.account) { mutableStateOf<String?>(null) }
+    var selection by rememberSaveable(notes.account) { mutableStateOf(emptyList<String>()) }
+    var selecting by rememberSaveable(notes.account) { mutableStateOf(false) }
+    var batchBusy by remember { mutableStateOf(false) }
     var focusEditor by rememberSaveable { mutableStateOf(false) }
     var settings by rememberSaveable { mutableStateOf(false) }
     var filters by remember { mutableStateOf(false) }
@@ -153,12 +170,33 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
     val keyboard = LocalSoftwareKeyboardController.current
     val activityFocus = LocalFocusManager.current
     val filter = NoteFilter(query, tag, AttachmentFilter.valueOf(attachmentType), NoteState.valueOf(lifecycle), NoteSort.valueOf(sortOrder))
-    val resultFlow = remember(notes, filter) { notes.observe(filter) }
-    val results by resultFlow.collectAsStateWithLifecycle(emptyList())
+    val resultFlow: kotlinx.coroutines.flow.Flow<List<NoteResult>?> = remember(notes, filter) { notes.observe(filter) }
+    val loadedResults by resultFlow.collectAsStateWithLifecycle(null)
+    val results = loadedResults.orEmpty()
+    val appBarState = rememberTopAppBarState()
+    val headerScroll = TopAppBarDefaults.enterAlwaysScrollBehavior(appBarState,
+        canScroll = { results.isNotEmpty() && !selecting && searchState.currentValue == SearchBarValue.Collapsed })
+    LaunchedEffect(listState.canScrollBackward) {
+        if (!listState.canScrollBackward) appBarState.heightOffset = 0f
+    }
+    LaunchedEffect(selecting) {
+        if (selecting) { appBarState.heightOffset = 0f; activityFocus.clearFocus(); keyboard?.hide() }
+    }
+    LaunchedEffect(loadedResults) {
+        if (loadedResults != null && selection.isNotEmpty()) {
+            val present = results.map { it.note.id }.toSet()
+            selection = selection.filter { it in present }
+            if (selection.isEmpty()) selecting = false
+        }
+    }
     var previousFilter by remember { mutableStateOf(filter) }
 
     LaunchedEffect(filter) {
         if (previousFilter != filter) {
+            if (previousFilter.copy(sort = filter.sort) != filter) {
+                selection = emptyList(); selecting = false
+            }
+            appBarState.heightOffset = 0f
             previousFilter = filter
             listState.scrollToItem(0)
             searchListState.scrollToItem(0)
@@ -171,13 +209,17 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
         val requestedNoteId = request.noteId
         try {
             if (request.create) {
+                selecting = false; selection = emptyList()
                 val draft = notes.create()
+                searchState.animateToCollapsed()
                 selectedId = draft.id
                 editorKey = draft.id
                 focusEditor = true
                 settings = false
             } else if (requestedNoteId != null) {
+                selecting = false; selection = emptyList()
                 if (notes.get(requestedNoteId) != null) {
+                    searchState.animateToCollapsed()
                     if (selectedId != requestedNoteId) editorKey = requestedNoteId
                     selectedId = requestedNoteId
                     focusEditor = false
@@ -200,6 +242,69 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             settings = false; selectedId = id; editorKey = id; focusEditor = false
         }, onClose = { settings = false })
         else -> {
+            var listMenu by remember { mutableStateOf(false) }
+            fun exitSelection() { selection = emptyList(); selecting = false }
+            fun toggle(noteId: String) {
+                if (batchBusy) return
+                selection = if (noteId in selection) selection - noteId else selection + noteId
+                if (selection.isEmpty()) selecting = false
+            }
+            fun beginSelection(result: NoteResult? = null) {
+                if (batchBusy) return
+                activityFocus.clearFocus(); keyboard?.hide()
+                val expanded = searchState.currentValue == SearchBarValue.Expanded || searchState.targetValue == SearchBarValue.Expanded
+                val index = searchListState.firstVisibleItemIndex
+                val offset = searchListState.firstVisibleItemScrollOffset
+                scope.launch {
+                    // Fullscreen search measures its collapsed anchor during the animation.
+                    // Keep that header attached until collapse completes, as note opening does.
+                    if (expanded) searchState.animateToCollapsed()
+                    if (result != null && result.note.id !in selection) selection += result.note.id
+                    selecting = true
+                    if (expanded) listState.scrollToItem(index, offset)
+                }
+            }
+            fun changeSelection(delete: Boolean) {
+                if (batchBusy || selection.isEmpty()) return
+                val ids = selection.toSet()
+                val repository = notes
+                val archived = filter.state == NoteState.ARCHIVED
+                batchBusy = true
+                scope.launch {
+                    try {
+                        if (delete) {
+                            val deadline = repository.markDeleted(ids)
+                            exitSelection(); batchBusy = false
+                            showUndoUntil(snackbar, "${ids.size} ${if (ids.size == 1) "note" else "notes"} deleted", deadline,
+                                onUndo = { repository.undoDelete(ids, deadline) })
+                        } else {
+                            repository.setState(ids, if (archived) NoteState.NORMAL else NoteState.ARCHIVED)
+                            exitSelection(); batchBusy = false
+                            snackbar.showSnackbar("${ids.size} ${if (ids.size == 1) "note" else "notes"} ${if (archived) "unarchived" else "archived"}")
+                        }
+                    } catch (exception: Exception) {
+                        if (exception is kotlinx.coroutines.CancellationException) throw exception
+                        batchBusy = false
+                        snackbar.showSnackbar(exception.message ?: "Unable to update selected notes")
+                    } finally { batchBusy = false }
+                }
+            }
+            fun shareSelection() {
+                if (batchBusy || selection.isEmpty()) return
+                val repository = notes
+                val ids = results.filter { it.note.id in selection }.map { it.note.id }
+                batchBusy = true
+                scope.launch {
+                    try {
+                        val selected = ids.map { requireNotNull(repository.get(it)) { "A selected note is no longer available." } }
+                        shareSelectedNotes(context, selected)
+                    } catch (exception: Exception) {
+                        if (exception is kotlinx.coroutines.CancellationException) throw exception
+                        snackbar.showSnackbar(exception.message ?: "Unable to share selected notes")
+                    } finally { batchBusy = false }
+                }
+            }
+            BackHandler(selecting) { if (!batchBusy) exitSelection() }
             val input: @Composable () -> Unit = {
                 val fieldFocus = LocalFocusManager.current
                 SearchBarDefaults.InputField(
@@ -220,12 +325,21 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                                 fieldFocus.clearFocus(); activityFocus.clearFocus(); keyboard?.hide()
                                 scope.launch { searchState.animateToCollapsed(); filters = true }
                             }
+                            Box {
+                                IconAction(R.drawable.ic_more, "Note list options") { listMenu = true }
+                                DropdownMenu(expanded = listMenu, onDismissRequest = { listMenu = false }) {
+                                    DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { AppIcon(R.drawable.ic_settings) }, onClick = { listMenu = false; settings = true })
+                                    DropdownMenuItem(text = { Text("Select notes") }, onClick = {
+                                        listMenu = false; beginSelection()
+                                    })
+                                }
+                            }
                         }
                     },
                 )
             }
             val open: (NoteResult) -> Unit = { result ->
-                scope.launch {
+                if (selecting) toggle(result.note.id) else scope.launch {
                     searchState.animateToCollapsed()
                     selectedId = result.note.id
                     editorKey = result.note.id
@@ -247,27 +361,21 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             }
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Scaffold(
-                modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().nestedScroll(createButtonScroll),
+                modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().nestedScroll(createButtonScroll).nestedScroll(headerScroll.nestedScrollConnection),
                 topBar = {
-                    androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.surface) {
-                        Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-                            // Intrinsic height keeps the headline and actions intact at larger text sizes.
-                            Row(Modifier.fillMaxWidth().padding(start = 32.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
-                                .heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Notes", Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.headlineLarge)
-                                IconAction(R.drawable.ic_settings, "Settings") { settings = true }
-                            }
-                            if (syncStatus.needsAuthentication) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
-                                TextButton(onClick = reconnect) { Text("Reconnect") }
-                            }
-                            // The header owns the safe inset; search and its filter action stay together.
-                            TopSearchBar(searchState, inputField = input, windowInsets = WindowInsets(0))
-                        }
-                    }
+                    if (selecting) NoteSelectionBar(selection.size, batchBusy, filter.state == NoteState.ARCHIVED,
+                        onClose = ::exitSelection, onArchive = { changeSelection(false) }, onDelete = { changeSelection(true) },
+                        onShare = ::shareSelection, onSelectAll = { selection = results.map { it.note.id } }, onClear = ::exitSelection,
+                        onFilters = { filters = true })
+                    else TopAppBar(title = {
+                        TopSearchBar(searchState, inputField = input, windowInsets = WindowInsets(0))
+                    }, expandedHeight = 80.dp, scrollBehavior = headerScroll,
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,
+                            scrolledContainerColor = MaterialTheme.colorScheme.surface))
                 },
                 snackbarHost = { SnackbarHost(snackbar) },
                 floatingActionButton = {
-                    ExtendedFloatingActionButton(onClick = {
+                    if (!selecting) ExtendedFloatingActionButton(onClick = {
                         scope.launch {
                             try {
                                 val draft = notes.create()
@@ -286,14 +394,17 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             ) { padding ->
                 if (searchState.currentValue == SearchBarValue.Collapsed)
                     NotesList(results, filter, listState, padding, open, clearSearch, resetFilters, chips,
-                        preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns })
+                        preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns },
+                        selection = selection.toSet(), selecting = selecting, enabled = !batchBusy, onSelect = ::beginSelection,
+                        prefix = { if (syncStatus.needsAuthentication && !selecting) TextButton(onClick = reconnect) { Text("Reconnect") } })
             }
             }
             ExpandedFullScreenSearchBar(searchState, inputField = input) {
                 NotesList(results, filter, searchListState, PaddingValues(), open, clearSearch, resetFilters, chips,
-                    preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns }, prefix = {
+                    preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns },
+                    selection = selection.toSet(), selecting = selecting, enabled = !batchBusy, onSelect = ::beginSelection, prefix = {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
-                        if (syncStatus.needsAuthentication) TextButton(onClick = reconnect) { Text("Reconnect") }
+                        if (syncStatus.needsAuthentication && !selecting) TextButton(onClick = reconnect) { Text("Reconnect") }
                     }
                 })
             }
@@ -329,7 +440,8 @@ private fun CompactFilterChip(label: String, removeDescription: String, onClear:
 private fun NotesList(results: List<NoteResult>, filter: NoteFilter, listState: LazyStaggeredGridState,
     padding: PaddingValues, onOpen: (NoteResult) -> Unit, onClearSearch: () -> Unit, onResetFilters: () -> Unit,
     chips: @Composable () -> Unit, preferredColumns: Int, onColumnsChange: (Int) -> Unit,
-    onLayout: (Int, Int) -> Unit, prefix: (@Composable () -> Unit)? = null) {
+    onLayout: (Int, Int) -> Unit, selection: Set<String>, selecting: Boolean, enabled: Boolean,
+    onSelect: (NoteResult) -> Unit, prefix: (@Composable () -> Unit)? = null) {
     val query = filter.query
     val filtered = filter.tag != null || filter.attachments != AttachmentFilter.ANY || filter.state != NoteState.NORMAL
     if (results.isEmpty()) {
@@ -389,13 +501,25 @@ private fun NotesList(results: List<NoteResult>, filter: NoteFilter, listState: 
             }
             items(results, key = { result -> "note:${result.note.id}" }) { result ->
                 val note = result.note
-                OutlinedCard(onClick = { onOpen(result) }, shape = MaterialTheme.shapes.medium,
+                val checked = note.id in selection
+                OutlinedCard(shape = MaterialTheme.shapes.medium,
+                    colors = CardDefaults.outlinedCardColors(containerColor = if (checked) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(if (checked) 2.dp else 1.dp, if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
                     modifier = Modifier.fillMaxWidth().testTag("note-${note.id}")
+                        .combinedClickable(enabled = enabled, role = Role.Button, onClick = { onOpen(result) },
+                            onLongClickLabel = "Select note", onLongClick = { onSelect(result) })
+                        .semantics { selected = checked; if (selecting) stateDescription = if (checked) "Selected" else "Not selected" }
                         .semantics { if (query.isNotEmpty()) contentDescription = "${note.title}, ${result.matches.size} matches for $query" }) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MarkdownPreviewText(note.title, LiteralSearch.ranges(note.title, query), style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface, maxLines = 3,
-                            fullSource = note.content, sourceOffset = note.content.indexOf(note.title).coerceAtLeast(0))
+                        Row(verticalAlignment = Alignment.Top) {
+                            Box(Modifier.weight(1f).clipToBounds()) {
+                                MarkdownPreviewText(note.title, LiteralSearch.ranges(note.title, query), style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface, maxLines = 3,
+                                    fullSource = note.content, sourceOffset = note.content.indexOf(note.title).coerceAtLeast(0))
+                            }
+                            if (selecting) Checkbox(checked = checked, onCheckedChange = null,
+                                modifier = Modifier.size(24.dp).clearAndSetSemantics {})
+                        }
                         if (result.excerpt.isNotBlank()) MarkdownPreviewText(result.excerpt, result.excerptMatches,
                             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 6, fullSource = note.content, sourceOffset = result.excerptOffset)

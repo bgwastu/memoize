@@ -10,6 +10,8 @@ import android.util.TypedValue
 import android.widget.TextView
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.ceil
@@ -41,7 +43,10 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
     val display = if (parsed.first == sourceOffset && parsed.second.input == fullSource)
         previewSourceStyles(parsed.second, source, sourceOffset) else DisplayStyles(source, "", emptyList())
     val colors = MaterialTheme.colorScheme
-    AndroidView(modifier = Modifier.fillMaxWidth(), factory = { context ->
+    val density = LocalDensity.current
+    val sizePx = with(density) { style.fontSize.toPx() }
+    val lineHeightPx = with(density) { style.lineHeight.toPx() }
+    AndroidView(modifier = Modifier.fillMaxWidth().clipToBounds(), factory = { context ->
         TextView(context).apply {
             includeFontPadding = false
             isFocusable = false
@@ -50,8 +55,8 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
         }
     }, update = { view ->
         view.maxLines = maxLines
-        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, style.fontSize.value)
-        view.setLineHeight(TypedValue.COMPLEX_UNIT_SP, style.lineHeight.value)
+        view.setTextSize(TypedValue.COMPLEX_UNIT_PX, sizePx)
+        view.setLineHeight(TypedValue.COMPLEX_UNIT_PX, lineHeightPx)
         view.letterSpacing = style.letterSpacing.value / style.fontSize.value
         view.typeface = sourceTypeface()
         view.setTextColor(color.toArgb())

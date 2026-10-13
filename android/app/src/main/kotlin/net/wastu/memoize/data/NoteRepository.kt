@@ -156,6 +156,43 @@ class NoteRepository private constructor(
         true
     }
 
+    /** A selection commits together, including its sync queue and recovery copies. */
+    suspend fun setState(ids: Set<String>, state: NoteState): Int = transaction {
+        val selected = ids.map { requireNote(it) }
+        check(selected.all { it.deleteAfter == null }) { "A selected note is no longer available." }
+        val changed = selected.filter { it.state != state.name }
+        changed.forEach { current ->
+            val saved = current.copy(state = state.name, revision = current.revision + 1, updatedAt = clock(), error = null)
+            dao.put(saved); queue(saved)
+        }
+        changed.size
+    }
+
+    suspend fun markDeleted(ids: Set<String>): Long = transaction {
+        val selected = ids.map { requireNote(it) }
+        check(selected.all { it.deleteAfter == null }) { "A selected note is no longer available." }
+        val copies = selected.map { it to durableSnapshot(it.note().snapshot()) }
+        copies.forEach { (note, snapshot) -> saveRecovery(note, snapshot, "Deleted note") }
+        val deadline = clock() + 5_000
+        copies.forEach { (note, snapshot) ->
+            val saved = note.copy(deleteAfter = deadline, attachmentsJson = SnapshotCodec.attachments(snapshot.attachments), error = null)
+            dao.put(saved); queue(saved)
+        }
+        deadline
+    }
+
+    suspend fun undoDelete(ids: Set<String>, deadline: Long): Boolean = transaction {
+        if (clock() >= deadline) return@transaction false
+        val selected = ids.map { dao.get(account, it) ?: return@transaction false }
+        if (selected.any { it.deleteAfter != deadline }) return@transaction false
+        selected.forEach { note ->
+            val saved = note.copy(deleteAfter = null)
+            dao.put(saved)
+            if (saved.note().isDirty) queue(saved) else dao.deletePending(account, saved.id)
+        }
+        true
+    }
+
     suspend fun discardBlankDraft(id: String): Boolean = transaction {
         val current = dao.get(account, id) ?: return@transaction false
         if (!current.note().isBlankDraft) return@transaction false

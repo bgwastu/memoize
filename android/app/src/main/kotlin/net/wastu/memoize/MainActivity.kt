@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        window.isNavigationBarContrastEnforced = false
         if (savedInstanceState == null) requests.value = request(intent)
         val graph = (application as MemoizeApplication).graph
         setContent {

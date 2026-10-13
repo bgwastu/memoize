@@ -27,6 +27,53 @@ import java.util.UUID
 @Config(sdk = [36])
 class NoteRepositoryTest {
     @Test
+    fun bulkActionsKeepRollbackRecoveryAndUndoAtomicAcrossReopening() = runTest {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val database = "bulk-${UUID.randomUUID()}.db"
+        val now = 1_000L
+        var notes = NoteRepository.open(context, "bulk-account", database) { now }
+        try {
+            for (id in listOf("a", "b", "c")) {
+                notes.create(id)
+                notes.saveEdit(id, EditSnapshot("$id **source** e\u0301 🐱", 3, 5))
+            }
+            val outside = notes.forAccount("other-account")
+            outside.create("outside")
+            val original = File(notes.originalsDirectory, "batch-original.txt").apply { writeText("Original attachment bytes") }
+            notes.addAttachment("a", NoteAttachment(filename = original.name, mimeType = "text/plain", size = original.length(), localPath = original.path))
+            var rejected = false
+            try { notes.setState(setOf("a", "outside"), NoteState.ARCHIVED) }
+            catch (_: IllegalArgumentException) { rejected = true }
+            assertTrue(rejected)
+            assertEquals(NoteState.NORMAL, notes.get("a")!!.state)
+            assertEquals(NoteState.NORMAL, outside.get("outside")!!.state)
+            assertEquals(2, notes.setState(setOf("a", "b"), NoteState.ARCHIVED))
+            assertEquals(NoteState.ARCHIVED, notes.get("b")!!.state)
+            notes.setState(setOf("a", "b"), NoteState.NORMAL)
+            rejected = false
+            try { notes.markDeleted(setOf("a", "missing")) }
+            catch (_: IllegalArgumentException) { rejected = true }
+            assertTrue(rejected)
+            assertEquals(null, notes.get("a")!!.deleteAfter)
+            assertTrue(notes.recoveries().isEmpty())
+            val deadline = notes.markDeleted(setOf("a", "b"))
+            assertEquals(listOf("c"), notes.search().map { it.note.id })
+            assertEquals(setOf("a", "b"), notes.recoveries().map { it.noteId }.toSet())
+            notes.close()
+            notes = NoteRepository.open(context, "bulk-account", database) { now }
+            assertEquals(deadline, notes.get("a")!!.deleteAfter)
+            assertEquals(deadline, notes.get("b")!!.deleteAfter)
+            assertFalse(notes.undoDelete(setOf("a", "missing"), deadline))
+            assertEquals(deadline, notes.get("a")!!.deleteAfter)
+            assertTrue(notes.undoDelete(setOf("a", "b"), deadline))
+            assertEquals(setOf("a", "b", "c"), notes.search().map { it.note.id }.toSet())
+            assertEquals("a **source** e\u0301 🐱", notes.get("a")!!.content)
+            assertEquals(3, notes.get("a")!!.selectionStart)
+            assertEquals("Original attachment bytes", File(requireNotNull(notes.get("a")!!.attachments.single().localPath)).readText())
+        } finally { notes.close(); context.deleteDatabase(database) }
+    }
+
+    @Test
     fun sortingKeepsTheQueryFiltersHighlightsAndAccountBoundary() = runTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val database = "search-sort-${UUID.randomUUID()}.db"

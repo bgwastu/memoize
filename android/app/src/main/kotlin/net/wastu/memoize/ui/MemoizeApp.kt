@@ -368,7 +368,9 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                         onShare = ::shareSelection, onSelectAll = { selection = results.map { it.note.id } }, onClear = ::exitSelection,
                         onFilters = { filters = true })
                     else TopAppBar(title = {
-                        TopSearchBar(searchState, inputField = input, windowInsets = WindowInsets(0))
+                        // Mirror the app bar's title inset at the trailing edge.
+                        TopSearchBar(searchState, inputField = input, modifier = Modifier.padding(end = 16.dp),
+                            windowInsets = WindowInsets(0))
                     }, expandedHeight = 80.dp, scrollBehavior = headerScroll,
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,
                             scrolledContainerColor = MaterialTheme.colorScheme.surface))

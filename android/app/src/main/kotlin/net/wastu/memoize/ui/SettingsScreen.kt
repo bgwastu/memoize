@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -68,11 +69,10 @@ import kotlinx.coroutines.launch
 import net.wastu.memoize.BuildConfig
 import net.wastu.memoize.R
 import net.wastu.memoize.data.NoteRepository
-import net.wastu.memoize.data.RecoveryRevision
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onClose: () -> Unit) {
+fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (String) -> Unit, onClose: () -> Unit) {
     val connection = graph.connection
     val settings by (connection?.settings ?: remember { MutableStateFlow(ConnectionSettings()) }).collectAsStateWithLifecycle()
     val status by (connection?.status ?: remember { MutableStateFlow(SyncStatus()) }).collectAsStateWithLifecycle()
@@ -85,7 +85,7 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onClose: () -> 
     var connectionError by remember { mutableStateOf<String?>(null) }
     var updating by remember { mutableStateOf(false) }
     var updateError by remember { mutableStateOf<String?>(null) }
-    var showRecovery by remember { mutableStateOf(false) }
+    var showRecovery by rememberSaveable { mutableStateOf(false) }
     var editingConnection by remember { mutableStateOf(false) }
     LaunchedEffect(status.needsAuthentication) { if (status.needsAuthentication) editingConnection = true }
     val repository by graph.repository.collectAsStateWithLifecycle()
@@ -399,58 +399,15 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onClose: () -> 
     }
 
     if (showRecovery) {
-        AccountRecoverySheet(
+        RecoveryBrowser(
             notes = repository,
             onDismiss = { showRecovery = false },
-            onRestored = {
+            onRestore = { version ->
+                val restored = repository.restoreRecovery(version.noteId, version.id)
                 showRecovery = false
-                scope.launch { snackbar.showSnackbar("Restored note. Open it from the notes list.") }
+                onRestored(restored.id)
+                scope.launch { snackbar.showSnackbar("Version restored") }
             }
         )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AccountRecoverySheet(notes: NoteRepository, onDismiss: () -> Unit, onRestored: () -> Unit) {
-    var versions by remember(notes) { mutableStateOf(emptyList<RecoveryRevision>()) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var restoring by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(notes) {
-        try { versions = notes.recoveries() }
-        catch (exception: Exception) {
-            if (exception is CancellationException) throw exception
-            error = exception.message ?: "Unable to load recovery versions"
-        } finally { loading = false }
-    }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Recovery versions", style = MaterialTheme.typography.headlineSmall)
-            Text("Saved copies of conflicted or deleted notes.")
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            if (loading) Text("Loading…")
-            else if (versions.isEmpty()) Text("No recovery versions.", Modifier.padding(bottom = 24.dp))
-            LazyColumn(Modifier.heightIn(max = 480.dp)) {
-                items(versions, key = { it.id }) { version ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-                        Text(version.reason, style = MaterialTheme.typography.titleSmall)
-                        Text(timestamp(version.savedAt), style = MaterialTheme.typography.labelSmall)
-                        Text(version.snapshot.content.take(300), maxLines = 5)
-                        TextButton(enabled = !restoring, onClick = {
-                            restoring = true; error = null
-                            scope.launch {
-                                try { notes.restoreRecovery(version.noteId, version.id); onRestored() }
-                                catch (exception: Exception) {
-                                    if (exception is CancellationException) throw exception
-                                    error = exception.message ?: "Unable to restore this version"
-                                } finally { restoring = false }
-                            }
-                        }) { Text("Restore this version") }
-                    }
-                }
-            }
-        }
     }
 }

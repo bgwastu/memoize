@@ -196,7 +196,9 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             onReplace = { replacement -> selectedId = replacement
                 scope.launch { snackbar.showSnackbar("Server removed the note. Your edit was saved as a new private note.") } },
             snackbar = snackbar, onClose = { selectedId = null; editorKey = null; focusEditor = false })
-        settings -> SettingsScreen(graph, snackbar) { settings = false }
+        settings -> SettingsScreen(graph, snackbar, onRestored = { id ->
+            settings = false; selectedId = id; editorKey = id; focusEditor = false
+        }, onClose = { settings = false })
         else -> {
             val input: @Composable () -> Unit = {
                 val fieldFocus = LocalFocusManager.current

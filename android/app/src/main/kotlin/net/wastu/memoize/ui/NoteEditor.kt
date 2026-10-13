@@ -53,6 +53,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
@@ -88,7 +89,6 @@ import net.wastu.memoize.data.LiteralSearch
 import net.wastu.memoize.data.Note
 import net.wastu.memoize.data.NoteRepository
 import net.wastu.memoize.data.NoteState
-import net.wastu.memoize.data.RecoveryRevision
 
 private data class ObservedNote(val account: String, val id: String, val note: Note?)
 
@@ -166,7 +166,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
-    var history by remember { mutableStateOf(false) }
+    var history by rememberSaveable(note.id) { mutableStateOf(false) }
     var attachmentChoice by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
     var finalized by remember { mutableStateOf(false) }
@@ -396,27 +396,21 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     if (attachmentChoice) AttachmentChoiceSheet(onDismiss = { attachmentChoice = false },
         onPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
         onFile = { filePicker.launch(arrayOf("*/*")) })
-    if (history) RecoverySheet(notes, note, onDismiss = { history = false }, onRestore = { recovery ->
-        scope.launch {
-            val message = try {
-                check(state.commandReady) { "Finish the current input before restoring this version." }
-                leaving = true
-                session.flush(snapshot(), state.characterEpoch)
-                val restored = notes.restoreRecovery(recovery.noteId, recovery.id)
-                if (restored.id == note.id) {
-                    check(state.replace(restored.content, TextRange(restored.selectionStart.coerceAtMost(restored.content.length),
-                        restored.selectionEnd.coerceAtMost(restored.content.length)))) { "Unable to replace the active input yet." }
-                    session.acceptRemote(restored, state.characterEpoch)
-                    state.observedContent = restored.content
-                } else onReplace(restored.id)
-                history = false
-                "Version restored"
-            } catch (exception: Exception) {
-                if (exception is kotlinx.coroutines.CancellationException) throw exception
-                exception.message ?: "Unable to restore this version"
-            } finally { leaving = false }
-            snackbar.showSnackbar(message)
-        }
+    if (history) RecoveryBrowser(notes, noteId = note.id, onDismiss = { history = false }, onRestore = { recovery ->
+        check(state.commandReady) { "Finish the current input before restoring this version." }
+        leaving = true
+        try {
+            session.flush(snapshot(), state.characterEpoch)
+            val restored = notes.restoreRecovery(recovery.noteId, recovery.id)
+            if (restored.id == note.id) {
+                check(state.replace(restored.content, TextRange(restored.selectionStart.coerceAtMost(restored.content.length),
+                    restored.selectionEnd.coerceAtMost(restored.content.length)))) { "Unable to replace the active input yet." }
+                session.acceptRemote(restored, state.characterEpoch)
+                state.observedContent = restored.content
+            } else onReplace(restored.id)
+            history = false
+            scope.launch { snackbar.showSnackbar("Version restored") }
+        } finally { leaving = false }
     })
 }
 
@@ -442,34 +436,6 @@ private fun AttachmentChoiceSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, on
                     ListItem(headlineContent = { Text("File") }, leadingContent = { AppIcon(R.drawable.ic_file) },
                         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onFile) })
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun RecoverySheet(notes: NoteRepository, note: Note, onDismiss: () -> Unit, onRestore: (RecoveryRevision) -> Unit) {
-    var versions by remember(notes, note.id) { mutableStateOf<List<RecoveryRevision>?>(null) }
-    LaunchedEffect(notes, note.id) { versions = notes.recovery(note.id) }
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Recovery versions", style = MaterialTheme.typography.headlineSmall)
-            LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("recovery-list")
-                .semantics { testTagsAsResourceId = true }) {
-                val loaded = versions
-                if (loaded == null) item { CircularProgressIndicator(Modifier.padding(24.dp)) }
-                else if (loaded.isEmpty()) item { Text("No recovery versions for this note.", Modifier.padding(bottom = 24.dp)) }
-                else items(loaded, key = { it.id }) { recovery ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp).testTag("recovery-${recovery.id}")
-                        .semantics { testTagsAsResourceId = true }) {
-                        Text(recovery.reason, style = MaterialTheme.typography.titleSmall)
-                        Text(timestamp(recovery.savedAt), style = MaterialTheme.typography.labelSmall)
-                        Text(recovery.snapshot.content.take(300), maxLines = 5, overflow = TextOverflow.Ellipsis)
-                        TextButton(onClick = { onRestore(recovery) }) { Text("Restore this version") }
-                    }
                 }
             }
         }

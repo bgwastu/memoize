@@ -69,15 +69,27 @@ jobs:
           persist-credentials: false
       - id: version
         run: echo "name=0.1.$(($(git rev-list --count HEAD) + $(cat .release-offset)))" >> "$GITHUB_OUTPUT"
+      - name: Load stable Mac signing identity from BWS
+        env:
+          BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+        run: |
+          curl --fail --silent --show-error --location https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-macos-universal-2.1.0.zip --output "$RUNNER_TEMP/bws.zip"
+          unzip -q "$RUNNER_TEMP/bws.zip" -d "$RUNNER_TEMP/bws-cli"
+          echo "$RUNNER_TEMP/bws-cli" >> "$GITHUB_PATH"
+          PATH="$RUNNER_TEMP/bws-cli:$PATH" python3 macos/Scripts/mac-signing.py setup
       - name: Build and sign update package
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           VERSION_NAME: ${{ steps.version.outputs.name }}
         run: |
           test -n "$SPARKLE_PRIVATE_KEY"
+          test -n "$MACOS_SIGNING_IDENTITY"
           macos/Scripts/release.sh "$VERSION_NAME"
       - name: Publish Mac release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_NAME: ${{ steps.version.outputs.name }}
         run: gh release create "v$VERSION_NAME" macos/build/release/* --target "$GITHUB_SHA" --title "Memoize Mac $VERSION_NAME" --notes "Mac update built from $GITHUB_SHA." --latest
+      - name: Remove temporary Mac signing keychain
+        if: always() && env.MACOS_SIGNING_DIRECTORY != ''
+        run: python3 macos/Scripts/mac-signing.py cleanup

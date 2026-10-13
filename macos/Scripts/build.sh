@@ -6,6 +6,9 @@ configuration="${1:-release}"
 version="${2:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)}"
 [[ "$configuration" == debug || "$configuration" == release ]] || { echo 'Use debug or release.' >&2; exit 2; }
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Use a version such as 0.1.0.' >&2; exit 2; }
+if [[ "$configuration" == release && -z "${MACOS_SIGNING_IDENTITY:-}" ]]; then
+    exec python3 Scripts/mac-signing.py run -- Scripts/build.sh "$configuration" "$version"
+fi
 
 export CLANG_MODULE_CACHE_PATH="$PWD/.build/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$PWD/.build/module-cache"
@@ -36,6 +39,15 @@ if [[ ! -f build/Memoize.icns || Scripts/make-icon.swift -nt build/Memoize.icns 
     /usr/bin/iconutil -c icns build/Memoize.iconset -o build/Memoize.icns
 fi
 cp build/Memoize.icns "$app/Contents/Resources/"
-/usr/bin/codesign --force --sign - "$app"
+identity="${MACOS_SIGNING_IDENTITY:--}"
+signing_args=(--force --deep --sign "$identity")
+if [[ "$identity" != - ]]; then
+    signing_args+=(--timestamp=none)
+    [[ -z "${MACOS_SIGNING_KEYCHAIN:-}" ]] || signing_args+=(--keychain "$MACOS_SIGNING_KEYCHAIN")
+fi
+/usr/bin/codesign "${signing_args[@]}" "$app"
 /usr/bin/codesign --verify --deep --strict "$app"
+if [[ "$identity" != - ]]; then
+    /usr/bin/codesign --verify -R "=certificate leaf = H\"$identity\"" "$app"
+fi
 printf '%s\n' "$app"

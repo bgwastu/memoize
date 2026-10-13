@@ -256,7 +256,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
         if (display.input === state.text && display.query == query) state.style(display, palette)
     }
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), topBar = {
-        TopAppBar(title = { Text("Note", style = MaterialTheme.typography.titleMedium) },
+        TopAppBar(title = {},
             navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", !leaving, close) }, actions = {
             IconAction(R.drawable.ic_more, "Note options") { menu = true }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

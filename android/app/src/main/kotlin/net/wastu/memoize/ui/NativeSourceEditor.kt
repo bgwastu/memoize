@@ -130,6 +130,18 @@ internal data class SourcePalette(val primary: Int, val secondary: Int, val tert
 internal data class SourcePresentation(val size: Float, val lineHeight: Float, val letterSpacing: Float,
     val text: Int, val hint: Int, val primary: Int, val selection: Int)
 
+internal fun sourceTypeface(): Typeface = Typeface.create(Typeface.DEFAULT, 400, false)
+
+/** Editor and previews paint the same literal Markdown with the same native spans. */
+internal fun sourceStyleSpans(style: SourceStyle, palette: SourcePalette): List<Any> = when (style) {
+    SourceStyle.HEADING -> listOf(ForegroundColorSpan(palette.primary), StyleSpan(Typeface.BOLD))
+    SourceStyle.BOLD -> listOf(StyleSpan(Typeface.BOLD))
+    SourceStyle.ITALIC -> listOf(StyleSpan(Typeface.ITALIC))
+    SourceStyle.CODE -> listOf(ForegroundColorSpan(palette.secondary), BackgroundColorSpan(palette.codeBackground))
+    SourceStyle.TAG -> listOf(ForegroundColorSpan(palette.tertiary))
+    SourceStyle.SEARCH -> listOf(ForegroundColorSpan(palette.searchText), BackgroundColorSpan(palette.searchBackground))
+}
+
 @Composable
 internal fun NativeSourceField(state: NativeSourceState, enabled: Boolean, modifier: Modifier) {
     val type = MaterialTheme.typography.bodyLarge
@@ -578,6 +590,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     internal fun present(value: SourcePresentation) {
         if (presentation == value) return
         presentation = value
+        typeface = sourceTypeface()
         setTextSize(TypedValue.COMPLEX_UNIT_SP, value.size)
         setLineHeight(TypedValue.COMPLEX_UNIT_SP, value.lineHeight)
         letterSpacing = value.letterSpacing
@@ -599,14 +612,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
             derivedSpans.forEach(body::removeSpan)
             derivedSpans.clear()
             for (styledRange in display.ranges) {
-                val spans: List<Any> = when (styledRange.style) {
-                    SourceStyle.HEADING -> listOf(ForegroundColorSpan(palette.primary), StyleSpan(Typeface.BOLD))
-                    SourceStyle.BOLD -> listOf(StyleSpan(Typeface.BOLD))
-                    SourceStyle.ITALIC -> listOf(StyleSpan(Typeface.ITALIC))
-                    SourceStyle.CODE -> listOf(ForegroundColorSpan(palette.secondary), BackgroundColorSpan(palette.codeBackground))
-                    SourceStyle.TAG -> listOf(ForegroundColorSpan(palette.tertiary))
-                    SourceStyle.SEARCH -> listOf(ForegroundColorSpan(palette.searchText), BackgroundColorSpan(palette.searchBackground))
-                }
+                val spans = sourceStyleSpans(styledRange.style, palette)
                 spans.forEach { span ->
                     body.setSpan(span, styledRange.range.start, styledRange.range.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     derivedSpans += span

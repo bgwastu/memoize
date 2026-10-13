@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -21,7 +20,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldState
@@ -120,254 +118,164 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onClose: () -> 
                     .padding(horizontal = 20.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text(
-                    text = "Sync & Server",
-                    modifier = Modifier
-                        .padding(start = 4.dp)
-                        .semantics { heading() },
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    modifier = Modifier.fillMaxWidth()
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        if (settings.connected) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    modifier = Modifier.size(44.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        AppIcon(R.drawable.ic_sync)
-                                    }
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = settings.account.ifBlank { "Memos Account" },
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = settings.server,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (status.needsAuthentication) MaterialTheme.colorScheme.errorContainer
-                                    else if (status.busy) MaterialTheme.colorScheme.secondaryContainer
-                                    else MaterialTheme.colorScheme.surfaceContainerHigh
-                                ) {
-                                    Text(
-                                        text = if (status.needsAuthentication) "Sign in"
-                                        else if (status.busy) "Syncing"
-                                        else "Connected",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = if (status.needsAuthentication) MaterialTheme.colorScheme.onErrorContainer
-                                        else if (status.busy) MaterialTheme.colorScheme.onSecondaryContainer
-                                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        AppIcon(R.drawable.ic_sync)
-                                    }
-                                }
-                                Column {
-                                    Text(
-                                        text = "Connect Memos",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Text(
-                                        text = "Sync across devices",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
+                    if (settings.connected) {
+                        Text(settings.account.ifBlank { "Memos account" },
+                            style = MaterialTheme.typography.titleMedium)
+                        Text(settings.server, style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text("Connect Memos", style = MaterialTheme.typography.titleMedium)
+                        Text("Sync your notes across devices.", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    if (settings.connected && status.message.isNotBlank()) {
+                        Text(status.message, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    }
+
+                    if (status.needsAuthentication) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Text(
-                                text = "Your notes stay on this device. Connect to sync across devices.",
+                                text = "Sign in again to resume sync.",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                                    .semantics { liveRegion = LiveRegionMode.Polite }
                             )
                         }
+                    }
 
-                        if (settings.connected && status.message.isNotBlank()) {
-                            Text(status.message, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                        }
-
-                        if (status.needsAuthentication) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.errorContainer,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    text = "Sign in again to resume sync.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier
-                                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                                        .semantics { liveRegion = LiveRegionMode.Polite }
-                                )
-                            }
-                        }
-
-                        if (!settings.connected || editingConnection || status.needsAuthentication) {
-                            OutlinedTextField(
-                                state = server,
-                                enabled = !connecting,
-                                label = { Text("Server URL") },
-                                placeholder = { Text("https://memos.example.com") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            OutlinedSecureTextField(
-                                state = token,
-                                enabled = !connecting,
-                                label = { Text("Access token") },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Button(
-                                    onClick = {
-                                        connecting = true
-                                        connectionError = null
-                                        val submittedServer = server.text.toString()
-                                        val submittedToken = token.text.toString()
-                                        scope.launch {
-                                            try {
-                                                requireNotNull(connection) { "Connection is unavailable" }.connect(submittedServer, submittedToken)
-                                                token.edit { replace(0, length, "") }
-                                                editingConnection = false
-                                                snackbar.showSnackbar("Connected")
-                                            } catch (exception: Exception) {
-                                                if (exception is CancellationException) throw exception
-                                                connectionError = exception.message ?: "Unable to connect"
-                                            } finally {
-                                                connecting = false
-                                            }
-                                        }
-                                    },
-                                    enabled = !connecting && connection != null && server.text.isNotBlank() && token.text.isNotBlank(),
-                                    modifier = if (!settings.connected) Modifier.fillMaxWidth() else Modifier
-                                ) {
-                                    if (connecting) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                    Text(if (connecting) "Connecting…" else if (settings.connected) "Reconnect" else "Connect")
-                                }
-                                if (editingConnection && !status.needsAuthentication && settings.connected) {
-                                    TextButton(
-                                        enabled = !connecting,
-                                        onClick = {
-                                            editingConnection = false
+                    if (!settings.connected || editingConnection || status.needsAuthentication) {
+                        OutlinedTextField(
+                            state = server,
+                            enabled = !connecting,
+                            label = { Text("Server URL") },
+                            placeholder = { Text("https://memos.example.com") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        OutlinedSecureTextField(
+                            state = token,
+                            enabled = !connecting,
+                            label = { Text("Access token") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Button(
+                                onClick = {
+                                    connecting = true
+                                    connectionError = null
+                                    val submittedServer = server.text.toString()
+                                    val submittedToken = token.text.toString()
+                                    scope.launch {
+                                        try {
+                                            requireNotNull(connection) { "Connection is unavailable" }.connect(submittedServer, submittedToken)
                                             token.edit { replace(0, length, "") }
+                                            editingConnection = false
+                                            snackbar.showSnackbar("Connected")
+                                        } catch (exception: Exception) {
+                                            if (exception is CancellationException) throw exception
+                                            connectionError = exception.message ?: "Unable to connect"
+                                        } finally {
+                                            connecting = false
                                         }
-                                    ) {
-                                        Text("Cancel")
                                     }
-                                }
-                            }
-                        } else {
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                },
+                                enabled = !connecting && connection != null && server.text.isNotBlank() && token.text.isNotBlank(),
+                                modifier = if (!settings.connected) Modifier.fillMaxWidth() else Modifier
                             ) {
-                                FilledTonalButton(
-                                    enabled = !status.busy && connection != null,
-                                    onClick = {
-                                        connectionError = null
-                                        scope.launch {
-                                            try {
-                                                connection?.retry()
-                                                connectionError = null
-                                            } catch (exception: Exception) {
-                                                if (exception is CancellationException) throw exception
-                                                connectionError = exception.message ?: "Unable to sync"
-                                            }
-                                        }
-                                    }
-                                ) {
-                                    if (status.busy) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                    } else {
-                                        AppIcon(R.drawable.ic_sync)
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                    Text(if (status.busy) "Syncing…" else "Sync now")
+                                if (connecting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                    Spacer(Modifier.width(8.dp))
                                 }
+                                Text(if (connecting) "Connecting…" else if (settings.connected) "Reconnect" else "Connect")
+                            }
+                            if (editingConnection && !status.needsAuthentication && settings.connected) {
                                 TextButton(
                                     enabled = !connecting,
-                                    onClick = { editingConnection = true }
+                                    onClick = {
+                                        editingConnection = false
+                                        token.edit { replace(0, length, "") }
+                                    }
                                 ) {
-                                    Text("Change connection")
+                                    Text("Cancel")
                                 }
                             }
                         }
-
-                        connectionError?.let { err ->
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.errorContainer,
-                                modifier = Modifier.fillMaxWidth()
+                    } else {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilledTonalButton(
+                                enabled = !status.busy && connection != null,
+                                onClick = {
+                                    connectionError = null
+                                    scope.launch {
+                                        try {
+                                            connection?.retry()
+                                            connectionError = null
+                                        } catch (exception: Exception) {
+                                            if (exception is CancellationException) throw exception
+                                            connectionError = exception.message ?: "Unable to sync"
+                                        }
+                                    }
+                                }
                             ) {
-                                Text(
-                                    text = err,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier
-                                        .padding(12.dp)
-                                        .semantics { liveRegion = LiveRegionMode.Polite }
-                                )
+                                if (status.busy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Text(if (status.busy) "Syncing…" else "Sync now")
                             }
+                            TextButton(
+                                enabled = !connecting,
+                                onClick = { editingConnection = true }
+                            ) {
+                                Text("Change connection")
+                            }
+                        }
+                    }
+
+                    connectionError?.let { err ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = err,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .semantics { liveRegion = LiveRegionMode.Polite }
+                            )
                         }
                     }
                 }

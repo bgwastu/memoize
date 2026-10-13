@@ -193,14 +193,14 @@ class MemoizeConnectionService(private val graph: AppGraph, private val allowLoo
             statusFlow.value = when {
                 paused -> SyncStatus("Reconnect in Settings to sync. Saved notes remain on this device.", needsAuthentication = true)
                 failures > 0 -> SyncStatus("$failures ${if (failures == 1) "item needs" else "items need"} attention. Saved on this device")
-                notes.pending().isNotEmpty() -> SyncStatus("Saved on this device · waiting to sync")
-                else -> SyncStatus("Up to date · saved on this device")
+                notes.pending().isNotEmpty() -> SyncStatus("Waiting to sync")
+                else -> SyncStatus("Up to date")
             }
         } catch (error: CancellationException) { throw error }
         catch (error: Exception) {
             val auth = error is MemosApiException && error.needsAuthentication
             statusFlow.value = SyncStatus(if (auth) "Reconnect in Settings to sync. Saved notes remain on this device."
-                else error.message ?: "Offline · saved on this device", needsAuthentication = auth)
+                else error.message ?: "Offline. Notes are saved on this device.", needsAuthentication = auth)
             completed = auth || (error is MemosApiException && !error.retryable)
         }
         val wake = active.nextWake()

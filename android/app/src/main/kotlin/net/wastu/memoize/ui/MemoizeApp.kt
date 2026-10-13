@@ -391,11 +391,12 @@ private fun NotesList(results: List<NoteResult>, filter: NoteFilter, listState: 
                     modifier = Modifier.fillMaxWidth().testTag("note-${note.id}")
                         .semantics { if (query.isNotEmpty()) contentDescription = "${note.title}, ${result.matches.size} matches for $query" }) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MarkdownPreviewText(note.title, LiteralSearch.ranges(note.title, query), style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface, maxLines = 3)
+                        MarkdownPreviewText(note.title, LiteralSearch.ranges(note.title, query), style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface, maxLines = 3,
+                            fullSource = note.content, sourceOffset = note.content.indexOf(note.title).coerceAtLeast(0))
                         if (result.excerpt.isNotBlank()) MarkdownPreviewText(result.excerpt, result.excerptMatches,
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 6)
+                            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 6, fullSource = note.content, sourceOffset = result.excerptOffset)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(timestamp(note.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (note.attachments.isNotEmpty()) Text("${note.attachments.size} ${if (note.attachments.size == 1) "attachment" else "attachments"}",

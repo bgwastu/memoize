@@ -1,16 +1,11 @@
 package net.wastu.memoize.ui
 
-import android.graphics.Typeface
 import android.text.Layout
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextPaint
 import android.text.TextUtils
-import android.text.style.BackgroundColorSpan
-import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
-import android.text.style.StyleSpan
-import android.text.style.UnderlineSpan
 import android.util.TypedValue
 import android.widget.TextView
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,7 +25,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.wastu.memoize.data.TextMatch
@@ -38,11 +32,14 @@ import net.wastu.memoize.data.TextMatch
 /** Read-only native paragraphs share editor spans without Compose's extra paragraph breaks. */
 @Composable
 internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style: TextStyle,
-    color: Color, maxLines: Int) {
-    val parsed by produceState(DisplayStyles(source, "", emptyList()), source) {
-        value = withContext(Dispatchers.Default) { sourceStyles(source, "", 0, source.length.coerceAtMost(512)) }
+    color: Color, maxLines: Int, fullSource: String = source, sourceOffset: Int = 0) {
+    val parsed by produceState(sourceOffset to DisplayStyles(fullSource, "", emptyList()), fullSource, sourceOffset, source) {
+        value = sourceOffset to withContext(Dispatchers.Default) {
+            sourceStyles(fullSource, "", sourceOffset, (sourceOffset + source.length.coerceAtMost(512)).coerceAtMost(fullSource.length))
+        }
     }
-    val display = if (parsed.input == source) parsed else DisplayStyles(source, "", emptyList())
+    val display = if (parsed.first == sourceOffset && parsed.second.input == fullSource)
+        previewSourceStyles(parsed.second, source, sourceOffset) else DisplayStyles(source, "", emptyList())
     val colors = MaterialTheme.colorScheme
     AndroidView(modifier = Modifier.fillMaxWidth(), factory = { context ->
         TextView(context).apply {
@@ -56,7 +53,7 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, style.fontSize.value)
         view.setLineHeight(TypedValue.COMPLEX_UNIT_SP, style.lineHeight.value)
         view.letterSpacing = style.letterSpacing.value / style.fontSize.value
-        view.typeface = Typeface.create(Typeface.DEFAULT, style.fontWeight?.weight ?: 400, false)
+        view.typeface = sourceTypeface()
         view.setTextColor(color.toArgb())
         view.text = nativeMarkdownPreview(display, colors, matches, view.paint)
     })
@@ -64,24 +61,41 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
 
 internal fun nativeMarkdownPreview(display: DisplayStyles, colors: ColorScheme,
     matches: List<TextMatch>, paint: TextPaint): SpannableString {
-    val annotated = markdownPreview(display, colors, matches)
-    return SpannableString(annotated.text).apply {
-        annotated.spanStyles.forEach { range ->
-            val style = range.item
-            val spans = buildList<Any> {
-                if (style.color != Color.Unspecified) add(ForegroundColorSpan(style.color.toArgb()))
-                if (style.background != Color.Unspecified) add(BackgroundColorSpan(style.background.toArgb()))
-                if (style.fontWeight == FontWeight.Bold) add(StyleSpan(Typeface.BOLD))
-                if (style.fontStyle == FontStyle.Italic) add(StyleSpan(Typeface.ITALIC))
-                if (style.textDecoration == TextDecoration.Underline) add(UnderlineSpan())
+    val palette = SourcePalette(colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
+        colors.surfaceContainerHigh.toArgb(), colors.onTertiaryContainer.toArgb(), colors.tertiaryContainer.toArgb())
+    return SpannableString(display.input.toString()).apply {
+        display.ranges.forEach { styled ->
+            sourceStyleSpans(styled.style, palette).forEach {
+                setSpan(it, styled.range.start, styled.range.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
-            spans.forEach { setSpan(it, range.start, range.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
+        }
+        matches.forEach { match ->
+            sourceStyleSpans(SourceStyle.SEARCH, palette).forEach {
+                setSpan(it, match.start, match.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
         }
         display.lists.forEach { paragraph ->
             val width = ceil(Layout.getDesiredWidth(this, paragraph.range.start, paragraph.contentStart, paint)).toInt()
             setSpan(LeadingMarginSpan.Standard(0, width), paragraph.range.start, paragraph.range.end, Spanned.SPAN_PARAGRAPH)
         }
     }
+}
+
+/** Project source offsets without reinterpreting clipped Markdown or changing visible text. */
+internal fun previewSourceStyles(display: DisplayStyles, source: String, offset: Int): DisplayStyles {
+    val end = offset + source.length
+    val ranges = display.ranges.mapNotNull { styled ->
+        val start = maxOf(offset, styled.range.start)
+        val stop = minOf(end, styled.range.end)
+        if (start < stop) StyledRange(TextMatch(start - offset, stop - offset), styled.style) else null
+    }
+    val lists = display.lists.mapNotNull { paragraph ->
+        val start = maxOf(offset, paragraph.range.start)
+        val stop = minOf(end, paragraph.range.end)
+        if (start < stop) ListParagraph(TextMatch(start - offset, stop - offset),
+            (paragraph.contentStart - offset).coerceIn(start - offset, stop - offset)) else null
+    }
+    return DisplayStyles(source, display.query, ranges, lists)
 }
 
 /** Search spans come last so matches keep their readable colors over Markdown styling. */

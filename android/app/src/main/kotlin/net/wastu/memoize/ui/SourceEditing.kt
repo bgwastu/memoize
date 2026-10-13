@@ -6,13 +6,15 @@ import net.wastu.memoize.data.TextMatch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-enum class SourceStyle { HEADING, BOLD, ITALIC, CODE, TAG, SEARCH }
+enum class SourceStyle { HEADING, BOLD, ITALIC, CODE, TAG, SYNTAX, SEARCH }
 data class StyledRange(val range: TextMatch, val style: SourceStyle)
 data class ListParagraph(val range: TextMatch, val contentStart: Int)
 data class DisplayStyles(val input: CharSequence, val query: String, val ranges: List<StyledRange>,
     val lists: List<ListParagraph> = emptyList())
 
 private val heading = Regex("(?m)^ {0,3}#{1,6}[^\\n]*")
+private val headingMarker = Regex("^ {0,3}(#{1,6})(?=[ \t]|$)")
+private val closingHeadingMarker = Regex("[ \t]+(#+)[ \t]*$")
 private val bold = Regex("\\*\\*[^\\n]*?\\*\\*|__[^\\n]*?__")
 private val italic = Regex("(?<!\\*)\\*[^\\n*]+\\*(?!\\*)")
 private val code = Regex("(?ms)^ {0,3}(`{3,}|~{3,})[^\\n]*\\n.*?^ {0,3}\\1[^\\n]*|`[^`\\n]+`")
@@ -32,12 +34,36 @@ suspend fun sourceStyles(input: CharSequence, query: String, anchor: Int = 0, vi
     if (end < body.length && body[end].isLowSurrogate()) end--
     val source = body.substring(start, end)
     val ranges = ArrayList<StyledRange>()
+    val markers = ArrayList<StyledRange>()
+    val codeMatches = code.findAll(source).toList()
+    fun marker(from: Int, to: Int) {
+        if (from < to && codeMatches.none { from >= it.range.first && to <= it.range.last + 1 })
+            markers += StyledRange(TextMatch(start + from, start + to), SourceStyle.SYNTAX)
+    }
     for ((expression, style) in listOf(heading to SourceStyle.HEADING, bold to SourceStyle.BOLD, italic to SourceStyle.ITALIC, code to SourceStyle.CODE, tag to SourceStyle.TAG)) {
-        expression.findAll(source).forEach {
+        val matches = if (style == SourceStyle.CODE) codeMatches.asSequence() else expression.findAll(source)
+        matches.forEach { match ->
             currentCoroutineContext().ensureActive()
-            ranges += StyledRange(TextMatch(start + it.range.first, start + it.range.last + 1), style)
+            val from = match.range.first
+            val to = match.range.last + 1
+            ranges += StyledRange(TextMatch(start + from, start + to), style)
+            when (style) {
+                SourceStyle.BOLD -> { marker(from, from + 2); marker(to - 2, to) }
+                SourceStyle.ITALIC -> { marker(from, from + 1); marker(to - 1, to) }
+                SourceStyle.HEADING -> {
+                    headingMarker.find(match.value)?.groups?.get(1)?.let {
+                        marker(from + it.range.first, from + it.range.last + 1)
+                    }
+                    closingHeadingMarker.find(match.value)?.groups?.get(1)?.let {
+                        marker(from + it.range.first, from + it.range.last + 1)
+                    }
+                }
+                else -> Unit
+            }
         }
     }
+    // Reset marker emphasis after content styles; actual search highlighting still wins.
+    ranges += markers
     net.wastu.memoize.data.LiteralSearch.ranges(source, query).forEach {
         ranges += StyledRange(TextMatch(start + it.start, start + it.end), SourceStyle.SEARCH)
     }

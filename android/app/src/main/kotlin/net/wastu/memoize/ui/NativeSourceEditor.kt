@@ -11,12 +11,14 @@ import android.text.NoCopySpan
 import android.text.SpanWatcher
 import android.text.Spannable
 import android.text.SpannableStringBuilder
+import android.text.TextPaint
 import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.StyleSpan
+import android.text.style.MetricAffectingSpan
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.ActionMode
@@ -126,11 +128,22 @@ internal class NativeSourceState(note: Note, selection: TextRange) {
 }
 
 internal data class SourcePalette(val primary: Int, val secondary: Int, val tertiary: Int, val codeBackground: Int,
-    val searchText: Int, val searchBackground: Int)
+    val searchText: Int, val searchBackground: Int, val syntax: Int = secondary)
 internal data class SourcePresentation(val size: Float, val lineHeight: Float, val letterSpacing: Float,
     val text: Int, val hint: Int, val primary: Int, val selection: Int)
 
 internal fun sourceTypeface(): Typeface = Typeface.create(Typeface.DEFAULT, 400, false)
+
+/** A normal StyleSpan cannot remove bold/italic inherited from an enclosing Markdown range. */
+internal class SourceSyntaxSpan : MetricAffectingSpan() {
+    override fun updateDrawState(paint: TextPaint) = resetEmphasis(paint)
+    override fun updateMeasureState(paint: TextPaint) = resetEmphasis(paint)
+    private fun resetEmphasis(paint: TextPaint) {
+        paint.typeface = sourceTypeface()
+        paint.isFakeBoldText = false
+        paint.textSkewX = 0f
+    }
+}
 
 /** Editor and previews paint the same literal Markdown with the same native spans. */
 internal fun sourceStyleSpans(style: SourceStyle, palette: SourcePalette): List<Any> = when (style) {
@@ -139,6 +152,7 @@ internal fun sourceStyleSpans(style: SourceStyle, palette: SourcePalette): List<
     SourceStyle.ITALIC -> listOf(StyleSpan(Typeface.ITALIC))
     SourceStyle.CODE -> listOf(ForegroundColorSpan(palette.secondary), BackgroundColorSpan(palette.codeBackground))
     SourceStyle.TAG -> listOf(ForegroundColorSpan(palette.tertiary))
+    SourceStyle.SYNTAX -> listOf(ForegroundColorSpan(palette.syntax), SourceSyntaxSpan())
     SourceStyle.SEARCH -> listOf(ForegroundColorSpan(palette.searchText), BackgroundColorSpan(palette.searchBackground))
 }
 

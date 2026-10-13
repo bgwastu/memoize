@@ -59,11 +59,14 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
     })
 }
 
+internal fun ColorScheme.sourceSyntaxColor(active: Boolean = false): Color =
+    onSurfaceVariant.copy(alpha = if (active) 0.85f else 0.60f)
+
 internal fun nativeMarkdownPreview(display: DisplayStyles, colors: ColorScheme,
     matches: List<TextMatch>, paint: TextPaint): SpannableString {
     val palette = SourcePalette(colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
         colors.surfaceContainerHigh.toArgb(), colors.onTertiaryContainer.toArgb(), colors.tertiaryContainer.toArgb(),
-        colors.onSurfaceVariant.toArgb())
+        colors.sourceSyntaxColor().toArgb())
     return SpannableString(display.input.toString()).apply {
         display.ranges.forEach { styled ->
             sourceStyleSpans(styled.style, palette).forEach {
@@ -111,7 +114,7 @@ internal fun markdownPreview(display: DisplayStyles, colors: ColorScheme, matche
                 SourceStyle.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
                 SourceStyle.CODE -> SpanStyle(color = colors.secondary, background = colors.surfaceContainerHigh)
                 SourceStyle.TAG -> SpanStyle(color = colors.tertiary)
-                SourceStyle.SYNTAX -> SpanStyle(color = colors.onSurfaceVariant, fontWeight = FontWeight.Normal, fontStyle = FontStyle.Normal)
+                SourceStyle.SYNTAX -> SpanStyle(color = colors.sourceSyntaxColor(), fontWeight = FontWeight.Normal, fontStyle = FontStyle.Normal)
                 SourceStyle.SEARCH -> search
             }
             addStyle(span, styled.range.start, styled.range.end)

@@ -252,7 +252,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     val colors = MaterialTheme.colorScheme
     val palette = SourcePalette(colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
         colors.surfaceContainerHigh.toArgb(), colors.onTertiaryContainer.toArgb(), colors.tertiaryContainer.toArgb(),
-        colors.onSurfaceVariant.toArgb())
+        colors.sourceSyntaxColor().toArgb(), colors.sourceSyntaxColor(active = true).toArgb())
     LaunchedEffect(display, palette, query) {
         if (display.input === state.text && display.query == query) state.style(display, palette)
     }

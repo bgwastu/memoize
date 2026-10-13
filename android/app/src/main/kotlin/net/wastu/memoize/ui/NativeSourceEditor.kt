@@ -128,7 +128,7 @@ internal class NativeSourceState(note: Note, selection: TextRange) {
 }
 
 internal data class SourcePalette(val primary: Int, val secondary: Int, val tertiary: Int, val codeBackground: Int,
-    val searchText: Int, val searchBackground: Int, val syntax: Int = secondary)
+    val searchText: Int, val searchBackground: Int, val syntax: Int = secondary, val activeSyntax: Int = syntax)
 internal data class SourcePresentation(val size: Float, val lineHeight: Float, val letterSpacing: Float,
     val text: Int, val hint: Int, val primary: Int, val selection: Int)
 
@@ -636,7 +636,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                     val marker = styledRange.range
                     val nearby = selectionStart >= 0 && selectionEnd >= 0 &&
                         minOf(selectionStart, selectionEnd) <= marker.end && maxOf(selectionStart, selectionEnd) >= marker.start
-                    listOf(ForegroundColorSpan(if (nearby) presentation?.text ?: palette.syntax else palette.syntax), SourceSyntaxSpan())
+                    listOf(ForegroundColorSpan(if (nearby) palette.activeSyntax else palette.syntax), SourceSyntaxSpan())
                 } else sourceStyleSpans(styledRange.style, palette)
                 spans.forEach { span ->
                     body.setSpan(span, styledRange.range.start, styledRange.range.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)

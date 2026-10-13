@@ -72,6 +72,9 @@ jobs:
       - name: Load stable Mac signing identity from BWS
         env:
           BWS_ACCESS_TOKEN: ${{ secrets.BWS_ACCESS_TOKEN }}
+          MACOS_SIGNING_CERTIFICATE_ID: ${{ vars.MACOS_SIGNING_CERTIFICATE_ID }}
+          MACOS_SIGNING_PASSWORD_ID: ${{ vars.MACOS_SIGNING_PASSWORD_ID }}
+          MACOS_SIGNING_IDENTITY_ID: ${{ vars.MACOS_SIGNING_IDENTITY_ID }}
         run: |
           curl --fail --silent --show-error --location https://github.com/bitwarden/sdk-sm/releases/download/bws-v2.1.0/bws-macos-universal-2.1.0.zip --output "$RUNNER_TEMP/bws.zip"
           unzip -q "$RUNNER_TEMP/bws.zip" -d "$RUNNER_TEMP/bws-cli"

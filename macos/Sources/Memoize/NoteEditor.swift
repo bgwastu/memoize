@@ -181,23 +181,25 @@ final class SourceTextView: NSTextView {
         setPinned(UserDefaults.standard.object(forKey:"pinned") as? Bool ?? true)
         let content = WindowBackgroundView(); panel.contentView = content
         header.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(header)
-        NSLayoutConstraint.activate([header.leadingAnchor.constraint(equalTo:content.leadingAnchor),header.trailingAnchor.constraint(equalTo:content.trailingAnchor),header.topAnchor.constraint(equalTo:content.topAnchor),header.heightAnchor.constraint(equalToConstant:34)])
+        NSLayoutConstraint.activate([header.leadingAnchor.constraint(equalTo:content.leadingAnchor),header.trailingAnchor.constraint(equalTo:content.trailingAnchor),header.topAnchor.constraint(equalTo:content.topAnchor),header.heightAnchor.constraint(equalToConstant:28)])
         screenShareToggle.bezelStyle = .inline; screenShareToggle.isBordered = false
         screenShareToggle.font = .systemFont(ofSize:11,weight:.medium)
         screenShareToggle.imagePosition = .imageLeading
         screenShareToggle.setButtonType(.toggle); screenShareToggle.target = self
         screenShareToggle.action = #selector(toggleScreenShareVisibility)
         screenShareToggle.translatesAutoresizingMaskIntoConstraints = false; header.glass.addSubview(screenShareToggle)
-        NSLayoutConstraint.activate([screenShareToggle.trailingAnchor.constraint(equalTo:header.glass.trailingAnchor,constant:-12),screenShareToggle.topAnchor.constraint(equalTo:header.glass.topAnchor,constant:6),screenShareToggle.heightAnchor.constraint(equalToConstant:22),screenShareToggle.leadingAnchor.constraint(greaterThanOrEqualTo:header.glass.leadingAnchor,constant:84)])
+        NSLayoutConstraint.activate([screenShareToggle.trailingAnchor.constraint(equalTo:header.glass.trailingAnchor,constant:-12),screenShareToggle.topAnchor.constraint(equalTo:header.glass.topAnchor,constant:3),screenShareToggle.heightAnchor.constraint(equalToConstant:22),screenShareToggle.leadingAnchor.constraint(greaterThanOrEqualTo:header.glass.leadingAnchor,constant:84)])
         header.onVisibilityChange = { [weak self] revealed in self?.updateHeaderVisibility(revealed:revealed) }
         updateScreenShareControl()
         updateHeaderVisibility(revealed:false)
         let layout = NSStackView(); layout.orientation = .vertical; layout.spacing = 0; layout.alignment = .leading
         layout.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(layout)
-        NSLayoutConstraint.activate([layout.leadingAnchor.constraint(equalTo:content.leadingAnchor),layout.trailingAnchor.constraint(equalTo:content.trailingAnchor),layout.topAnchor.constraint(equalTo:content.topAnchor,constant:34),layout.bottomAnchor.constraint(equalTo:content.bottomAnchor)])
+        NSLayoutConstraint.activate([layout.leadingAnchor.constraint(equalTo:content.leadingAnchor),layout.trailingAnchor.constraint(equalTo:content.trailingAnchor),layout.topAnchor.constraint(equalTo:content.topAnchor,constant:28),layout.bottomAnchor.constraint(equalTo:content.bottomAnchor)])
 
         scrollView.hasVerticalScroller = true; scrollView.autohidesScrollers = true; scrollView.drawsBackground = false
         scrollView.borderType = .noBorder; scrollView.documentView = textView; scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // The hover header already reserves space for the native window controls.
+        scrollView.automaticallyAdjustsContentInsets = false
         scrollView.wantsLayer = true
         scrollView.layer?.masksToBounds = true
         textView.isRichText = false; textView.importsGraphics = false; textView.allowsUndo = true
@@ -208,7 +210,7 @@ final class SourceTextView: NSTextView {
         let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 3
         textView.defaultParagraphStyle = paragraph; textView.typingAttributes = [.font:baseFont,.paragraphStyle:paragraph,.foregroundColor:NSColor.labelColor]
         textView.linkTextAttributes = [.foregroundColor:NSColor.controlAccentColor,.underlineStyle:0]
-        textView.textContainerInset = NSSize(width:22,height:18); textView.isVerticallyResizable = true; textView.isHorizontallyResizable = false
+        textView.textContainerInset = NSSize(width:22,height:6); textView.isVerticallyResizable = true; textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]; textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width:490,height:CGFloat.greatestFiniteMagnitude)
         textView.minSize = NSSize(width:0,height:0); textView.maxSize = NSSize(width:CGFloat.greatestFiniteMagnitude,height:CGFloat.greatestFiniteMagnitude)

@@ -513,7 +513,14 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     }
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) { super.onScrollChanged(l, t, oldl, oldt); scheduleSettle() }
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { super.onSizeChanged(w, h, oldw, oldh); scheduleSettle() }
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean = operation(EditKind.TYPING) { super.onKeyDown(keyCode, event) }
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_TAB && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed && canCommand()) {
+            val edit = sourceIndent(revision, range(), event.isShiftPressed)
+            if (edit != null) { command(edit); return true }
+            if (!range().collapsed) return true
+        }
+        return operation(EditKind.TYPING) { super.onKeyDown(keyCode, event) }
+    }
     override fun onKeyShortcut(keyCode: Int, event: KeyEvent): Boolean {
         if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_Z) { if (event.isShiftPressed) redo() else undo(); return true }
         if (event.isCtrlPressed && keyCode == KeyEvent.KEYCODE_Y) { redo(); return true }
@@ -540,13 +547,13 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
         if (!ready) return
         if (history.canUndo) info.addAction(AccessibilityNodeInfo.AccessibilityAction(UNDO_ID, "Undo edit"))
         if (history.canRedo) info.addAction(AccessibilityNodeInfo.AccessibilityAction(REDO_ID, "Redo edit"))
-        if (canCommand() && listIndent(revision, range(), false) != null) info.addAction(AccessibilityNodeInfo.AccessibilityAction(INDENT_ID, "Indent"))
-        if (canCommand() && listIndent(revision, range(), true) != null) info.addAction(AccessibilityNodeInfo.AccessibilityAction(OUTDENT_ID, "Outdent"))
+        if (canCommand() && sourceIndent(revision, range(), false) != null) info.addAction(AccessibilityNodeInfo.AccessibilityAction(INDENT_ID, "Indent"))
+        if (canCommand() && sourceIndent(revision, range(), true) != null) info.addAction(AccessibilityNodeInfo.AccessibilityAction(OUTDENT_ID, "Outdent"))
     }
 
     private fun canReplaceSource() = ready && idle() && composing() == null
     private fun canCommand() = isEnabled && canReplaceSource()
-    fun indent(outdent: Boolean) { if (canCommand()) listIndent(revision, range(), outdent)?.let(::command) }
+    fun indent(outdent: Boolean) { if (canCommand()) sourceIndent(revision, range(), outdent)?.let(::command) }
     fun format(format: SourceFormat) { if (canCommand()) formatSourceAtSelection(revision, range(), format)?.let(::command) }
     fun formatBlock(format: SourceBlockFormat) { if (canCommand()) formatBlocks(revision, range(), format)?.let(::command) }
     private fun command(edit: SourceEdit, before: () -> Unit = {}) {

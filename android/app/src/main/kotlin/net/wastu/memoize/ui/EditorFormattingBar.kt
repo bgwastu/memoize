@@ -91,9 +91,9 @@ internal fun EditorFormattingBar(state: NativeSourceState, enabled: Boolean, can
                     }
                 }
                 FormattingButton(R.drawable.ic_format_indent_increase, "Indent", commands &&
-                    listIndent(state.text, state.selection, false) != null) { state.indent(false) }
+                    sourceIndent(state.text, state.selection, false) != null) { state.indent(false) }
                 FormattingButton(R.drawable.ic_format_indent_decrease, "Outdent", commands &&
-                    listIndent(state.text, state.selection, true) != null) { state.indent(true) }
+                    sourceIndent(state.text, state.selection, true) != null) { state.indent(true) }
             }
             Box {
                 FormattingButton(R.drawable.ic_more, "More formatting", enabled) { menu = FormattingMenu.MORE }

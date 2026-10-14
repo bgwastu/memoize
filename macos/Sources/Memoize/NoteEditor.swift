@@ -62,13 +62,36 @@ final class SourceTextView: NSTextView {
     }
     override func insertTab(_ sender: Any?) {
         guard !hasMarkedText(), selectedRanges.count == 1,
-              let edit = MarkdownListEditing.indent(in:string,selection:selectedRange(),outdent:false) else { super.insertTab(sender); return }
-        applyListEdit(edit)
+              let edit = MarkdownListEditing.selectionIndent(in:string,selection:selectedRange(),outdent:false) else { super.insertTab(sender); return }
+        applyIndentEdit(edit,outdent:false)
     }
     override func insertBacktab(_ sender: Any?) {
         guard !hasMarkedText(), selectedRanges.count == 1,
-              let edit = MarkdownListEditing.indent(in:string,selection:selectedRange(),outdent:true) else { super.insertBacktab(sender); return }
-        applyListEdit(edit)
+              let edit = MarkdownListEditing.selectionIndent(in:string,selection:selectedRange(),outdent:true) else {
+            if !hasMarkedText(), selectedRanges.count == 1, selectedRange().length > 0 { return }
+            super.insertBacktab(sender); return
+        }
+        applyIndentEdit(edit,outdent:true)
+    }
+    private func applyIndentEdit(_ edit: MarkdownListEditing.Edit, outdent: Bool) {
+        guard selectedRange().length > 0 else { applyListEdit(edit); return }
+        guard (string as NSString).substring(with:edit.range) != edit.replacement else { return }
+        withUndoGroup(outdent ? "Outdent" : "Indent") {
+            replaceSelectedLines(edit.range,with:edit.replacement,selection:edit.selection,undoSelection:selectedRange())
+        }
+    }
+    private func replaceSelectedLines(_ range: NSRange, with replacement: String, selection: NSRange, undoSelection: NSRange) {
+        let previous = (string as NSString).substring(with:range)
+        ownUndoManager.registerUndo(withTarget:self) { view in
+            view.replaceSelectedLines(NSRange(location:range.location,length:replacement.utf16.count),with:previous,selection:undoSelection,undoSelection:selection)
+        }
+        // Keep native input and change notifications, with one inverse edit that
+        // restores the exact selection rather than selecting the replaced block.
+        ownUndoManager.disableUndoRegistration()
+        insertText(replacement,replacementRange:range)
+        ownUndoManager.enableUndoRegistration()
+        setSelectedRange(selection)
+        breakUndoCoalescing()
     }
     private func applyListEdit(_ edit: MarkdownListEditing.Edit) {
         guard (string as NSString).substring(with:edit.range) != edit.replacement else { return }

@@ -67,6 +67,36 @@ public enum MarkdownListEditing {
         let replacement = newline + current.next
         return Edit(range:selection,replacement:replacement,selection:NSRange(location:selection.location + replacement.utf16.count,length:0))
     }
+    /// Selected source lines can be shifted even outside a Markdown list.
+    public static func selectionIndent(in source: String, selection: NSRange, outdent: Bool) -> Edit? {
+        let ns = source as NSString
+        guard selection.location != NSNotFound, selection.location >= 0, NSMaxRange(selection) <= ns.length else { return nil }
+        if selection.length == 0 { return indent(in:source,selection:selection,outdent:outdent) }
+        let first = line(ns,at:selection.location)
+        let last = line(ns,at:NSMaxRange(selection) - 1)
+        let range = NSRange(location:first.location,length:NSMaxRange(last) - first.location)
+        let original = ns.substring(with:range)
+        let lines = original.components(separatedBy:"\n")
+        if lines.allSatisfy({ item($0) != nil && fence.firstMatch(in:$0,range:NSRange(location:0,length:$0.utf16.count)) == nil }),
+           let edit = indent(in:source,selection:selection,outdent:outdent) { return edit }
+
+        var offset = range.location, delta = 0
+        var start = selection.location, end = NSMaxRange(selection)
+        let replacement = lines.map { content in
+            let leading = content.prefix { $0 == " " || $0 == "\t" }
+            let remove = outdent ? (leading.first == "\t" ? 1 : min(4,leading.prefix { $0 == " " }.count)) : 0
+            let add = outdent ? 0 : 4
+            func mapped(_ position: Int) -> Int { offset + delta + max(0,position - offset - remove) + add }
+            if selection.location >= offset, selection.location <= offset + content.utf16.count { start = mapped(selection.location) }
+            if NSMaxRange(selection) >= offset, NSMaxRange(selection) <= offset + content.utf16.count { end = mapped(NSMaxRange(selection)) }
+            offset += content.utf16.count + 1
+            delta += add - remove
+            return String(repeating:" ",count:add) + content.dropFirst(remove)
+        }.joined(separator:"\n")
+        if NSMaxRange(selection) > NSMaxRange(range) { end = NSMaxRange(selection) + delta }
+        guard replacement != original else { return nil }
+        return Edit(range:range,replacement:replacement,selection:NSRange(location:start,length:max(0,end - start)))
+    }
     public static func indent(in source: String, selection: NSRange, outdent: Bool) -> Edit? {
         let ns = source as NSString
         guard selection.location != NSNotFound, NSMaxRange(selection) <= ns.length else { return nil }

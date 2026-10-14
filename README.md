@@ -35,7 +35,10 @@ If macOS blocks the first launch, choose **System Settings → Privacy & Securit
 | ⌘F / ⇧⌘F | Find in note / search all notes |
 | ⌘` | Switch between notes list and editor |
 | ⌘0 | Toggle the notes list |
-| Return / Tab / ⇧Tab | Continue a list / nest / outdent |
+| Return | Continue a Markdown list |
+| Tab / ⇧Tab | Indent / outdent selected lines; nest / outdent a list at the caret |
+
+On Android, select text and use the indent/outdent buttons to shift its lines.
 
 ## Development
 

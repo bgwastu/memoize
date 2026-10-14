@@ -155,6 +155,35 @@ private fun nextListNumber(items: List<ListItemPrefix>, column: Int): Int {
 /** A source replacement independent of the Android editor renderer. Offsets are UTF-16. */
 data class SourceEdit(val range: TextRange, val replacement: String, val selection: TextRange)
 
+/** Shift selected source lines, retaining smart nesting for selections of list items. */
+fun sourceIndent(source: String, selection: TextRange, outdent: Boolean): SourceEdit? {
+    if (selection.min < 0 || selection.max > source.length) return null
+    listIndent(source, selection, outdent)?.let { return it }
+    if (selection.collapsed) return null
+    val start = source.lastIndexOf('\n', selection.min - 1) + 1
+    val end = source.indexOf('\n', selection.max - 1).let { if (it < 0) source.length else it }
+    val original = source.substring(start, end)
+    var offset = start
+    var delta = 0
+    var mappedStart = selection.start
+    var mappedEnd = selection.end
+    val replacement = original.split('\n').joinToString("\n") { content ->
+        val leading = content.takeWhile { it == ' ' || it == '\t' }
+        val remove = if (outdent) { if (leading.startsWith('\t')) 1 else minOf(4, leading.takeWhile { it == ' ' }.length) } else 0
+        val add = if (outdent) 0 else 4
+        fun mapped(position: Int) = offset + delta + maxOf(0, position - offset - remove) + add
+        if (selection.start in offset..offset + content.length) mappedStart = mapped(selection.start)
+        if (selection.end in offset..offset + content.length) mappedEnd = mapped(selection.end)
+        offset += content.length + 1
+        delta += add - remove
+        " ".repeat(add) + content.drop(remove)
+    }
+    if (selection.start > end) mappedStart = selection.start + delta
+    if (selection.end > end) mappedEnd = selection.end + delta
+    if (replacement == original) return null
+    return SourceEdit(TextRange(start, end), replacement, TextRange(mappedStart, mappedEnd))
+}
+
 /** Match the Mac client's parent-content indentation and ordered sibling numbering. */
 fun listIndent(source: String, selection: TextRange, outdent: Boolean): SourceEdit? {
     if (selection.min < 0 || selection.max > source.length) return null

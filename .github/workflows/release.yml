@@ -2,6 +2,14 @@ name: Release
 on:
   push:
     branches: [main]
+    paths:
+      - 'android/**'
+      - 'macos/**'
+      - 'shared/assets/**'
+      - 'tools/release/**'
+      - '.github/workflows/release.yml'
+      - '.release-offset'
+      - 'LICENSE'
 permissions:
   contents: write
 concurrency:
@@ -9,7 +17,42 @@ concurrency:
   cancel-in-progress: false
   queue: max
 jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      android: ${{ steps.platforms.outputs.android }}
+      macos: ${{ steps.platforms.outputs.macos }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: platforms
+        name: Detect changes that affect app releases
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          before, head = os.environ["BEFORE"], os.environ["GITHUB_SHA"]
+          exists = subprocess.run(["git", "cat-file", "-e", before + "^{commit}"], stderr=subprocess.DEVNULL).returncode == 0
+          command = ["git", "diff", "--no-renames", "--name-only", "-z", before, head] if exists else ["git", "ls-tree", "-r", "--name-only", "-z", head]
+          paths = subprocess.check_output(command).decode().split("\0")
+          ignored = ("android/app/src/test/", "android/app/src/androidTest/", "android/app/schemas/", "android/docs/", "macos/Tests/", "macos/docs/")
+          tooling = {"android/.gitignore", "android/README.md", "macos/.gitignore", "macos/README.md", "macos/Scripts/test.sh", "macos/Scripts/export-tag-fixtures.go", "macos/Scripts/update-tag-data.py"}
+          paths = [path for path in paths if path and not path.startswith(ignored) and path not in tooling]
+          shared = any(path in {".release-offset", "LICENSE"} for path in paths)
+          android = shared or any(path.startswith(("android/", "tools/release/", "shared/assets/")) for path in paths)
+          macos = shared or any(path.startswith("macos/") for path in paths)
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"android={str(android).lower()}\nmacos={str(macos).lower()}\n")
+          PY
   android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -60,6 +103,8 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/memoize-production-signing.keystore"
   macos:
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-26
     timeout-minutes: 25
     steps:

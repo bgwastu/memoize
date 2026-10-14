@@ -19,8 +19,14 @@ A small, native Mac and Android client for [Memos](https://github.com/usememos/m
 **Android**
 
 <p align="center">
-  <img src="assets/screenshot-android-notes.png" alt="Memoize on Android: everyday notes about weekend plans, books, dinner ideas, packing, and groceries" width="320">
-  <img src="assets/screenshot-android-editor.png" alt="Memoize on Android: the Weekend plans note in the native Markdown editor" width="320">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot-android-notes-dark.png">
+    <img src="assets/screenshot-android-notes.png" alt="Memoize on Android: everyday notes about weekend plans, books, dinner ideas, packing, and groceries" width="320">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot-android-editor-dark.png">
+    <img src="assets/screenshot-android-editor.png" alt="Memoize on Android: the Weekend plans note in the native Markdown editor" width="320">
+  </picture>
 </p>
 
 ## Install

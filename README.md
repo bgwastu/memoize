@@ -16,6 +16,13 @@ A small, native Mac and Android client for [Memos](https://github.com/usememos/m
   <img src="assets/screenshot.png" alt="Memoize on macOS: searchable notes beside the floating Markdown editor, with window controls and the editor toolbar">
 </picture>
 
+**Android**
+
+<p align="center">
+  <img src="assets/screenshot-android-notes.png" alt="Memoize on Android: everyday notes about weekend plans, books, dinner ideas, packing, and groceries" width="320">
+  <img src="assets/screenshot-android-editor.png" alt="Memoize on Android: the Weekend plans note in the native Markdown editor" width="320">
+</p>
+
 ## Install
 
 Download from [GitHub Releases](https://github.com/bgwastu/memoize/releases).
@@ -49,7 +56,8 @@ Mac requires Xcode 26+. Build with `macos/Scripts/build.sh debug`.
 Android: build locally with `android/gradlew -p android assembleDebug`.
 Use the real device `adb connect atlas.mesh:5555`; no emulators.
 
-Work directly on `main` with signed commits. CI only builds and publishes
-Mac and Android releases for every commit. Run relevant checks locally.
+Work directly on `main` with signed commits. CI builds and publishes only
+the apps affected by a push; documentation and screenshots skip releases.
+Run relevant checks locally.
 
 AI disclosure: Human validated.

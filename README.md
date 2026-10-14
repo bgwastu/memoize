@@ -8,10 +8,12 @@ A small, native Mac and Android client for [Memos](https://github.com/usememos/m
 - Instant keyboard navigation, local search, and tag filtering
 - Offline notes with automatic saves and background sync
 
+**macOS**
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="assets/screenshot.png">
-  <img src="assets/screenshot.png" alt="Memoize's notes menu and floating editor with sample notes">
+  <img src="assets/screenshot.png" alt="Memoize on macOS: searchable notes beside the floating Markdown editor, with window controls and the editor toolbar">
 </picture>
 
 ## Install

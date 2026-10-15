@@ -5,13 +5,11 @@ import Network
 import UniformTypeIdentifiers
 import MemoizeCore
 import Sparkle
-import ScreenCaptureKit
 
 @MainActor final class AppController: NSObject, NSApplicationDelegate {
     private(set) var editor: NoteEditor!
     private(set) var library: LibraryWindow!
     private let settings = SettingsWindow()
-    private let presentation = DesktopPresentation()
     private let captureMonitor = ScreenCaptureMonitor()
     private var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
@@ -93,14 +91,14 @@ import ScreenCaptureKit
         #endif
         editor = NoteEditor(); library = LibraryWindow(); installMenus(); connectUI()
         KeyboardShortcuts.onKeyUp(for:.toggleNote) { [weak self] in self?.toggleNote() }
-        KeyboardShortcuts.onKeyUp(for:.toggleScreenShareVisibility) { [weak self] in self?.toggleScreenShareVisibility() }
+        KeyboardShortcuts.onKeyUp(for:.toggleLibrary) { [weak self] in self?.toggleLibrary() }
         network.pathUpdateHandler = { [weak self] path in
             if path.status == .satisfied { Task { @MainActor in await self?.sync?.schedule(after:0.5) } }
         }
         network.start(queue:DispatchQueue(label:"net.wastu.memoize.network",qos:.utility))
         let center = NSWorkspace.shared.notificationCenter
         observers.append(center.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main) { [weak self] _ in
-            Task { @MainActor in self?.presentation.stop(); await self?.finishAttachmentWrites(); self?.flush(); await self?.saveQueue?.value; await self?.sync?.stop() }
+            Task { @MainActor in await self?.finishAttachmentWrites(); self?.flush(); await self?.saveQueue?.value; await self?.sync?.stop() }
         })
         observers.append(center.addObserver(forName:NSWorkspace.didWakeNotification,object:nil,queue:.main) { [weak self] _ in
             Task { @MainActor in
@@ -160,17 +158,6 @@ import ScreenCaptureKit
             return true
         }
         editor.onPin = { [weak self] in self?.setPinnedWindows($0) }
-        editor.onScreenShareToggle = { [weak self] in
-            guard !NativeWindowPrivacy.isEnabled else { return }
-            self?.presentation.toggle()
-        }
-        presentation.noteSnapshot = { [weak self] in self?.editor.presentationSnapshot() }
-        presentation.preferredScreen = { [weak self] in self?.editor.panel.screen ?? NSScreen.main }
-        presentation.onChange = { [weak self] in
-            guard let self else { return }
-            editor.updatePresentation(active:presentation.isPresenting,starting:presentation.isStarting,includesNote:presentation.includesNote,error:presentation.error)
-        }
-        presentation.onNotice = { [weak self] in self?.showBriefNotice($0) }
         setPinnedWindows(editor.panel.level == .floating)
         editor.onTag = { [weak self] in self?.library.filter($0) }
         editor.onReferences = { [weak self] in self?.updateAttachments($0) }
@@ -853,23 +840,23 @@ import ScreenCaptureKit
         }
     }
     @objc private func toggleNote() {
-        if presentation.isPresenting {
-            if editor.panel.isVisible { hideApp() } else { showApp() }
-            return
+        if NSApp.isHidden || !NSApp.windows.contains(where:{ $0.isVisible && !$0.isMiniaturized }) { showNoteAlone() }
+        else {
+            // Close these before hiding so unhide cannot bring them back with the note.
+            library.hide(); settings.loadedWindow?.orderOut(nil); hideApp()
         }
-        if NSApp.isHidden || !NSApp.windows.contains(where:{ $0.isVisible && !$0.isMiniaturized }) { showApp() }
-        else { hideApp() }
+    }
+    private func showNoteAlone() {
+        if current == nil { newNote(show:false) }
+        editor.show()
+        library.hide(); settings.loadedWindow?.orderOut(nil)
     }
     private func showApp() {
         if current == nil { newNote(show:false) }
         editor.show()
     }
-    @objc private func toggleScreenShareVisibility() {
-        guard !NativeWindowPrivacy.isEnabled else { return }
-        editor.toggleScreenShareVisibility()
-    }
     private func applyNativePrivacy() {
-        if NativeWindowPrivacy.isEnabled { presentation.stop(); captureMonitor.start() }
+        if NativeWindowPrivacy.isEnabled { captureMonitor.start() }
         else { captureMonitor.stop() }
         NativeWindowPrivacy.applyToAllWindows()
         editor.updateNativeCapturePrivacy(NativeWindowPrivacy.isEnabled,captured:captureMonitor.isCaptured)
@@ -882,13 +869,7 @@ import ScreenCaptureKit
         flush(); rememberPosition(immediate:true)
         editor.panel.orderOut(nil)
     }
-    @objc private func hideApp() {
-        if presentation.isPresenting {
-            hideEditor(); library.hide()
-            return
-        }
-        NSApp.hide(nil)
-    }
+    @objc private func hideApp() { NSApp.hide(nil) }
     func applicationWillHide(_ notification: Notification) {
         flush(); rememberPosition(immediate:true)
     }
@@ -957,7 +938,8 @@ import ScreenCaptureKit
         let windowItem = NSMenuItem(title:"Window",action:nil,keyEquivalent:""); windowItem.submenu = window; menu.addItem(windowItem); NSApp.windowsMenu = window; NSApp.mainMenu = menu
         let status = NSMenu()
         let toggle = item("Show / Hide Memoize",#selector(toggleNote)); toggle.setShortcut(for:.toggleNote); status.addItem(toggle)
-        status.addItem(item("New Note",#selector(newAction))); status.addItem(item("All Notes",#selector(libraryAction))); status.addItem(.separator())
+        status.addItem(item("New Note",#selector(newAction)))
+        let notes = item("All Notes",#selector(libraryAction)); notes.setShortcut(for:.toggleLibrary); status.addItem(notes); status.addItem(.separator())
         status.addItem(item("Sync Now",#selector(syncAction))); status.addItem(item("Settings…",#selector(settingsAction))); status.addItem(.separator())
         if let statusUpdates = updates.copy() as? NSMenuItem { status.addItem(statusUpdates) }
         let statusQuit = item("Quit Memoize",#selector(NSApplication.terminate(_:))); statusQuit.target = NSApp; status.addItem(statusQuit)
@@ -991,7 +973,6 @@ import ScreenCaptureKit
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if readyToQuit { return .terminateNow }
         if shuttingDown { return .terminateCancel }
-        presentation.stop()
         captureMonitor.stop()
         shuttingDown = true; rememberPosition(immediate:true); flush()
         Task {
@@ -1071,12 +1052,6 @@ import ScreenCaptureKit
         }
         if ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_NATIVE_FULLSCREEN"] == "1" {
             try await smokeNativeFullscreenPrivacy()
-            DispatchQueue.main.async { NSApp.terminate(nil) }
-            return
-        }
-        try await smokeScreenShareVisibility()
-        if ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_BROWSER_SHARING"] == "1" {
-            try await smokeBrowserSharing()
             DispatchQueue.main.async { NSApp.terminate(nil) }
             return
         }
@@ -1175,12 +1150,13 @@ import ScreenCaptureKit
         guard NSApp.isHidden else { throw MemoizeError.message("The global shortcut did not hide the entire app.") }
         try await Task.sleep(for:.milliseconds(500))
         try await smokeEdit { self.toggleNote() }; try await Task.sleep(for:.milliseconds(500))
-        guard !NSApp.isHidden, library.window.isVisible, editor.panel.isVisible,
-              settings.loadedWindow?.isVisible == true else { throw MemoizeError.message("Restoring the app lost an open window: hidden=\(NSApp.isHidden), active=\(NSApp.isActive), library=\(library.window.isVisible), editor=\(editor.panel.isVisible), settings=\(settings.loadedWindow?.isVisible == true).") }
+        guard !NSApp.isHidden, !library.window.isVisible, editor.panel.isVisible,
+              settings.loadedWindow?.isVisible != true else { throw MemoizeError.message("The global shortcut reopened the notes list or Settings: hidden=\(NSApp.isHidden), library=\(library.window.isVisible), editor=\(editor.panel.isVisible), settings=\(settings.loadedWindow?.isVisible == true).") }
         settings.loadedWindow?.performClose(nil)
         try await smokeEdit { self.toggleNote() }; try await Task.sleep(for:.milliseconds(500))
         try await smokeEdit { self.toggleNote() }; try await Task.sleep(for:.milliseconds(500))
-        guard settings.loadedWindow?.isVisible == false else { throw MemoizeError.message("Restoring the app reopened closed Settings.") }
+        guard settings.loadedWindow?.isVisible != true, !library.window.isVisible, editor.panel.isVisible else { throw MemoizeError.message("Restoring the note reopened the notes list or Settings.") }
+        library.show(focus:false); editor.show()
         for _ in 0..<80 {
             if NSApp.isActive { break }
             try await Task.sleep(for:.milliseconds(25))
@@ -1326,207 +1302,6 @@ import ScreenCaptureKit
             try await Task.sleep(for:.milliseconds(50))
         }
         throw MemoizeError.message("Native full-screen fixture timed out.")
-    }
-    private func smokeScreenShareVisibility() async throws {
-        let frame = editor.panel.frame
-        defer { presentation.stop(); editor.panel.setFrame(frame,display:true); editor.panel.orderOut(nil) }
-        editor.display(Note(content:"# Presentation prototype\nThis note must remain readable locally."))
-        editor.panel.setFrame(NSRect(origin:frame.origin,size:NSSize(width:330,height:260)),display:true)
-        editor.show()
-        let source = editor.textView.string, selection = editor.textView.selectedRange()
-        let live = ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_PRESENTATION_CAPTURE"] == "1" && CGPreflightScreenCaptureAccess()
-        if live {
-            let content = try await SCShareableContent.current
-            let screenID = (editor.panel.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
-            let display = try requireSmoke(content.displays.first(where:{ $0.displayID == screenID }))
-            try await presentation.start(display:display)
-            guard presentation.isPresenting, presentation.window.isVisible,
-                  editor.isPresenting, editor.isScreenShareHidden else {
-                throw MemoizeError.message("Presentation did not start with the note private.")
-            }
-            // Independently capture the local fixture window while the filtered
-            // stream is running. A gray mask must not replace its writing area.
-            try await smokeCaptureLocalNote(name:"presentation-local-note-capture")
-        }
-        // Freeze a synthetic desktop in the real output canvas for deterministic
-        // composition checks. No captured desktop images are written to disk.
-        let desktopWidth = max(1,Int(presentation.canvas.bounds.width.rounded()))
-        let desktopHeight = max(1,Int(presentation.canvas.bounds.height.rounded()))
-        let composition = PresentationCanvas(frame:NSRect(x:0,y:0,width:desktopWidth,height:desktopHeight))
-        let desktop = try requireSmoke(NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:desktopWidth,pixelsHigh:desktopHeight,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0))
-        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep:desktop)
-        NSColor.green.setFill(); NSRect(x:0,y:0,width:desktopWidth,height:desktopHeight).fill()
-        NSGraphicsContext.restoreGraphicsState()
-        composition.setDesktop(try requireSmoke(desktop.cgImage))
-        func outputBitmap() throws -> NSBitmapImageRep {
-            let view = composition
-            view.displayIfNeeded()
-            let bitmap = try requireSmoke(view.bitmapImageRepForCachingDisplay(in:view.bounds))
-            view.cacheDisplay(in:view.bounds,to:bitmap)
-            return bitmap
-        }
-        let baseline = try outputBitmap()
-        let green = try requireSmoke(baseline.colorAt(x:baseline.pixelsWide / 2,y:baseline.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
-        guard green.greenComponent > green.redComponent + 0.2, green.greenComponent > green.blueComponent + 0.2 else {
-            throw MemoizeError.message("The synthetic desktop did not render green.")
-        }
-        func nonGreenSamples() throws -> Int {
-            let bitmap = try outputBitmap()
-            var result = 0
-            // Ignore the outer eight pixels, where fractional window sizing can
-            // introduce a one-pixel letterbox around the synthetic desktop.
-            for y in stride(from:8,to:bitmap.pixelsHigh - 8,by:8) {
-                for x in stride(from:8,to:bitmap.pixelsWide - 8,by:8) {
-                    guard let color = bitmap.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB) else { continue }
-                    if max(abs(color.redComponent - green.redComponent),abs(color.greenComponent - green.greenComponent),abs(color.blueComponent - green.blueComponent)) > 0.1 { result += 1 }
-                }
-            }
-            return result
-        }
-        let privateSamples = try nonGreenSamples()
-        guard privateSamples == 0 else { throw MemoizeError.message("The private presentation contained \(privateSamples) non-green samples at \(presentation.canvas.bounds).") }
-        if live { editor.screenShareToggle.performClick(nil) }
-        else {
-            editor.updatePresentation(active:true,starting:false,includesNote:true,error:nil)
-        }
-        let snapshot = try requireSmoke(editor.presentationSnapshot())
-        let snapshotImage = try requireSmoke(snapshot.cgImage(forProposedRect:nil,context:nil,hints:nil))
-        let snapshotBitmap = NSBitmapImageRep(cgImage:snapshotImage)
-        let emptyWritingArea = try requireSmoke(snapshotBitmap.colorAt(x:snapshotBitmap.pixelsWide / 2,y:snapshotBitmap.pixelsHigh - 10))
-        guard emptyWritingArea.alphaComponent > 0.99 else {
-            throw MemoizeError.message("The writing area lost its solid background.")
-        }
-        composition.setNote(snapshot)
-        guard try nonGreenSamples() > 100, !editor.isScreenShareHidden,
-              !live || presentation.canvas.hasNoteOverlay,
-              editor.screenShareToggle.state == .on,
-              editor.textView.string == source, editor.textView.selectedRange() == selection else {
-            throw MemoizeError.message("Including the note failed to compose it or changed the local editor.")
-        }
-        try outputBitmap().representation(using:.png,properties:[:])?.write(to:support.appending(path:"presentation-shared-fixture.png"))
-        if live {
-            editor.screenShareToggle.performClick(nil)
-        } else {
-            editor.updatePresentation(active:true,starting:false,includesNote:false,error:nil)
-        }
-        composition.setNote(nil)
-        guard try nonGreenSamples() == 0, editor.isScreenShareHidden,
-              !live || !presentation.canvas.hasNoteOverlay,
-              editor.screenShareToggle.state == .off else {
-            throw MemoizeError.message("Hiding the note did not immediately clear the output on an idle desktop.")
-        }
-        try smokeVisibleEditorText()
-        let file = support.appending(path:"screen-share-preview.txt")
-        try Data("Attachment preview fixture".utf8).write(to:file)
-        editor.showAttachment(at:file,anchor:editor.screenShareToggle)
-        guard editor.isShowingAttachmentPreview else { throw MemoizeError.message("A private attachment preview did not open.") }
-        editor.dismissAttachmentPreview()
-        for size in [NSSize(width:330,height:260),NSSize(width:650,height:650)] {
-            editor.panel.setFrame(NSRect(origin:frame.origin,size:size),display:true)
-            try await Task.sleep(for:.milliseconds(100))
-            editor.panel.contentView?.layoutSubtreeIfNeeded()
-            guard editor.isScreenShareHidden, editor.screenShareError == nil, editor.panel.isVisible,
-                  editor.panel.frame.width >= size.width, editor.panel.frame.height >= size.height,
-                  editor.panel.styleMask.contains(.resizable),
-                  editor.screenShareToggle.frame.minX >= 84,
-                  editor.screenShareToggle.frame.maxX <= editor.panel.contentView!.bounds.maxX - 11 else {
-                throw MemoizeError.message("Private note resize check failed: expected \(size), actual \(editor.panel.frame.size), resizable=\(editor.panel.styleMask.contains(.resizable)), visible=\(editor.panel.isVisible), private=\(editor.isScreenShareHidden), error=\(editor.screenShareError ?? "none"), control=\(editor.screenShareToggle.frame), content=\(editor.panel.contentView!.bounds).")
-            }
-            let root = try requireSmoke(editor.panel.contentView?.superview)
-            let center = NSPoint(x:editor.screenShareToggle.bounds.midX,y:editor.screenShareToggle.bounds.midY)
-            let hit = root.hitTest(editor.screenShareToggle.convert(center,to:root))
-            guard hit === editor.screenShareToggle || hit?.isDescendant(of:editor.screenShareToggle) == true else {
-                throw MemoizeError.message("The presentation control is covered by the title bar: \(String(describing:hit)).")
-            }
-        }
-        editor.panel.orderOut(nil); editor.show()
-        guard editor.panel.isVisible, editor.isScreenShareHidden, editor.screenShareError == nil else {
-            throw MemoizeError.message("Local show/hide changed the private presentation state.")
-        }
-        try smokeVisibleEditorText()
-        try captureSmokeWindow(editor.panel,name:"presentation-private-note")
-        presentation.window.performClose(nil)
-        guard !editor.isPresenting, !presentation.window.isVisible,
-              editor.textView.string == source, editor.textView.selectedRange() == selection else {
-            throw MemoizeError.message("Stopping the presentation changed the note or left the output active.")
-        }
-        FileHandle.standardOutput.write(Data("Presentation controls passed: private default, note composition, immediate overlay removal on an idle desktop, local rendered text, resizing, attachment previews, editor control state and output-window Close. Live capture \(live ? "passed" : "not requested or unavailable"). Meet still requires sharing the presentation window and checking a receiver.\n".utf8))
-    }
-    private func smokeCaptureLocalNote(name: String) async throws {
-        guard editor.panel.isVisible else { throw MemoizeError.message("The synthetic local note must be visible for the capture check.") }
-        let content = try await SCShareableContent.current
-        let localWindow = try requireSmoke(content.windows.first(where:{ $0.windowID == CGWindowID(editor.panel.windowNumber) }))
-        let filter = SCContentFilter(desktopIndependentWindow:localWindow)
-        let configuration = SCStreamConfiguration()
-        let scale = CGFloat(filter.pointPixelScale)
-        configuration.width = Int(editor.panel.frame.width * scale)
-        configuration.height = Int(editor.panel.frame.height * scale)
-        configuration.ignoreShadowsSingleWindow = true; configuration.showsCursor = false
-        let image = try await SCScreenshotManager.captureImage(contentFilter:filter,configuration:configuration)
-        let bitmap = NSBitmapImageRep(cgImage:image)
-        let background = try requireSmoke(bitmap.colorAt(x:bitmap.pixelsWide / 2,y:bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
-        var textSamples = 0
-        for y in Int(40 * scale)..<min(Int(120 * scale),bitmap.pixelsHigh - Int(60 * scale)) {
-            for x in Int(20 * scale)..<(bitmap.pixelsWide - Int(20 * scale)) {
-                if let color = bitmap.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB),
-                   max(abs(color.redComponent - background.redComponent),abs(color.greenComponent - background.greenComponent),abs(color.blueComponent - background.blueComponent)) > 0.2 { textSamples += 1 }
-            }
-        }
-        guard textSamples > 400 else { throw MemoizeError.message("The synthetic local note's text was blanked during screen sharing.") }
-        try bitmap.representation(using:.png,properties:[:])?.write(to:support.appending(path:name + ".png"))
-        FileHandle.standardOutput.write(Data("Local capture check passed: \(textSamples) contrasting text pixels.\n".utf8))
-    }
-    private func smokeBrowserSharing() async throws {
-        if let session = CGSessionCopyCurrentDictionary() as? [String:Any],
-           session["CGSSessionScreenIsLocked"] as? Bool == true {
-            throw MemoizeError.message("Unlock the Mac before running live browser or Google Meet sharing diagnostics.")
-        }
-        guard CGPreflightScreenCaptureAccess() else { throw MemoizeError.message("Browser sharing diagnostics require existing Screen Recording access.") }
-        let content = try await SCShareableContent.current
-        let display = try requireSmoke(content.displays.first)
-        let fixture = Note(content:"# Private meeting note\nBROWSER_TEST_NOTE\nHello from Memoize.")
-        install(fixture,show:true)
-        editor.panel.setFrame(NSRect(x:260,y:180,width:400,height:400),display:true)
-        try await presentation.start(display:display)
-        defer { presentation.stop(); editor.panel.orderOut(nil) }
-        let commandFile = support.appending(path:"browser-command.txt")
-        let stateFile = support.appending(path:"browser-state.json")
-        func state(_ command: String) throws {
-            let data = try JSONSerialization.data(withJSONObject:["command":command,"presenting":presentation.isPresenting,"shared":presentation.includesNote,"localVisible":editor.panel.isVisible,"windowTitle":presentation.window.title])
-            try data.write(to:stateFile,options:.atomic)
-        }
-        try state("ready")
-        var previous = "ready"
-        let requestedTimeout = Int(ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_BROWSER_TIMEOUT"] ?? "") ?? 90
-        let deadline = ContinuousClock.now.advanced(by:.seconds(max(30,min(requestedTimeout,1800))))
-        while ContinuousClock.now < deadline {
-            if let command = try? String(contentsOf:commandFile,encoding:.utf8).trimmingCharacters(in:.whitespacesAndNewlines), command != previous {
-                previous = command
-                switch command {
-                case "share", "private":
-                    let included = command == "share"
-                    if presentation.includesNote != included { toggleScreenShareVisibility() }
-                case "edit":
-                    editor.display(Note(content:"# Updated meeting note\nBROWSER_EDITED_NOTE\nThis is a longer updated fixture.\nThe shared writing area must refresh.\nChanges remain readable locally.\nMore lines verify the live update.\nEnd of browser fixture."))
-                case "resize": editor.panel.setFrame(NSRect(x:260,y:180,width:500,height:600),display:true)
-                case "hideLocal": hideApp()
-                case "showLocal": editor.show()
-                case "verifyLocalCapture": try await smokeCaptureLocalNote(name:"browser-local-capture")
-                case "finish":
-                    presentation.stop(); try state(command)
-                    FileHandle.standardOutput.write(Data("Browser sharing fixture finished normally.\n".utf8)); return
-                default: throw MemoizeError.message("Unknown browser fixture command.")
-                }
-                guard presentation.isPresenting else { throw MemoizeError.message(presentation.error ?? "Browser fixture capture stopped unexpectedly.") }
-                if editor.panel.isVisible {
-                    try smokeVisibleEditorText()
-                    try captureSmokeWindow(editor.panel,name:"browser-local-" + command)
-                }
-                try state(command)
-            }
-            try await Task.sleep(for:.milliseconds(50))
-        }
-        throw MemoizeError.message("Browser sharing diagnostics timed out.")
     }
     private func smokeNewNoteLifecycle() async throws {
         guard let store else { throw MemoizeError.message("Missing smoke store.") }
@@ -1803,7 +1578,7 @@ import ScreenCaptureKit
         editor.show()
         guard !library.window.isVisible else { throw MemoizeError.message("Focusing the note reopened the closed menu.") }
         guard editor.panel.allowsToolTipsWhenApplicationIsInactive,
-              editor.libraryToggle.toolTip == "Show notes (⌘0)" else { throw MemoizeError.message("Inactive note controls lost their tooltips.") }
+              editor.libraryToggle.toolTip == "Show notes (⌥⌘L)" else { throw MemoizeError.message("Inactive note controls lost their tooltips.") }
         newNote()
         let draft = try requireSmoke(current?.id)
         editor.textView.deleteBackward(nil)

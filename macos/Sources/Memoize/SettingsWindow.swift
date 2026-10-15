@@ -8,7 +8,7 @@ import Sparkle
 
 extension KeyboardShortcuts.Name {
     static let toggleNote = Self("toggleNote",initial:.init(.x,modifiers:[.option,.command]))
-    static let toggleScreenShareVisibility = Self("toggleScreenShareVisibility",initial:.init(.s,modifiers:[.option,.command]))
+    static let toggleLibrary = Self("toggleLibrary",initial:.init(.l,modifiers:[.option,.command]))
 }
 
 @MainActor final class SettingsModel: ObservableObject {
@@ -161,8 +161,8 @@ private struct ShortcutSettings: View {
         Form {
             Section("Global shortcuts") {
                 KeyboardShortcuts.Recorder("Show or hide Memoize",name:.toggleNote)
-                KeyboardShortcuts.Recorder("Present / toggle shared note",name:.toggleScreenShareVisibility)
-                HStack { Spacer(); Button("Restore Defaults") { KeyboardShortcuts.reset(.toggleNote); KeyboardShortcuts.reset(.toggleScreenShareVisibility) }.controlSize(.small) }
+                KeyboardShortcuts.Recorder("Show or hide notes",name:.toggleLibrary)
+                HStack { Spacer(); Button("Restore Defaults") { KeyboardShortcuts.reset(.toggleNote); KeyboardShortcuts.reset(.toggleLibrary) }.controlSize(.small) }
             }
             Section("While writing") {
                 shortcut("New note","⌘N")

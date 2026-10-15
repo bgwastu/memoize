@@ -1,6 +1,7 @@
 import AppKit
 import QuickLookUI
 import QuartzCore
+import KeyboardShortcuts
 import MemoizeCore
 
 final class SourceTextView: NSTextView {
@@ -156,14 +157,9 @@ final class SourceTextView: NSTextView {
     let updatedLabel = NSTextField(labelWithString:"")
     let toast = EditorToast(frame:.zero)
     let attachmentStrip = AttachmentStrip(frame:.zero)
-    let screenShareToggle = NSButton(title:"Present…",target:nil,action:nil)
-    private(set) var isPresenting = false
+    let screenShareToggle = NSButton(title:"Hidden in screen shares",target:nil,action:nil)
     private var nativeCapturePrivacy = false
     private var screenIsCaptured = false
-    private(set) var isStartingPresentation = false
-    private(set) var isScreenShareHidden = true
-    private(set) var screenShareError: String?
-    var canToggleScreenShareVisibility: Bool { !isStartingPresentation }
     private let pin = NSButton()
     private(set) var libraryToggle = NSButton()
     private var parsing: Task<Void,Never>?
@@ -189,7 +185,6 @@ final class SourceTextView: NSTextView {
     var onLibrary: (() -> Void)?
     var onDelete: (() -> Void)?
     var onPin: ((Bool) -> Void)?
-    var onScreenShareToggle: (() -> Void)?
     let baseFont = NSFont.monospacedSystemFont(ofSize:14,weight:.regular)
 
     override init() {
@@ -209,8 +204,7 @@ final class SourceTextView: NSTextView {
         screenShareToggle.bezelStyle = .inline; screenShareToggle.isBordered = false
         screenShareToggle.font = .systemFont(ofSize:11,weight:.medium)
         screenShareToggle.imagePosition = .imageLeading
-        screenShareToggle.setButtonType(.toggle); screenShareToggle.target = self
-        screenShareToggle.action = #selector(toggleScreenShareVisibility)
+        screenShareToggle.isEnabled = false; screenShareToggle.isHidden = true
         screenShareToggle.translatesAutoresizingMaskIntoConstraints = false; header.glass.addSubview(screenShareToggle)
         NSLayoutConstraint.activate([screenShareToggle.trailingAnchor.constraint(equalTo:header.glass.trailingAnchor,constant:-12),screenShareToggle.topAnchor.constraint(equalTo:header.glass.topAnchor,constant:3),screenShareToggle.heightAnchor.constraint(equalToConstant:22),screenShareToggle.leadingAnchor.constraint(greaterThanOrEqualTo:header.glass.leadingAnchor,constant:84)])
         header.onVisibilityChange = { [weak self] revealed in self?.updateHeaderVisibility(revealed:revealed) }
@@ -245,21 +239,20 @@ final class SourceTextView: NSTextView {
 
         layout.addArrangedSubview(attachmentStrip); attachmentStrip.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([attachmentStrip.widthAnchor.constraint(equalTo:layout.widthAnchor),attachmentStrip.heightAnchor.constraint(equalToConstant:AttachmentStrip.height)])
-        let footer = NSStackView(); footer.orientation = .horizontal; footer.spacing = 10; footer.edgeInsets = NSEdgeInsets(top:0,left:14,bottom:6,right:14)
+        let footer = NSStackView(); footer.orientation = .horizontal; footer.alignment = .centerY; footer.spacing = 10; footer.edgeInsets = NSEdgeInsets(top:0,left:14,bottom:6,right:14)
         toolbar.glass.contentView = footer; layout.addArrangedSubview(toolbar); toolbar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([toolbar.widthAnchor.constraint(equalTo:layout.widthAnchor),toolbar.heightAnchor.constraint(equalToConstant:30)])
-        // The status is a sibling of the glass, so hiding controls never hides it.
+        // The status stays outside the glass, so hiding the controls never hides it.
+        // Its center follows the notes button: the bar's bottom inset would otherwise leave the cloud and date low.
         toolbar.addSubview(syncIndicator); syncIndicator.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([syncIndicator.leadingAnchor.constraint(equalTo:toolbar.leadingAnchor,constant:12),syncIndicator.centerYAnchor.constraint(equalTo:toolbar.centerYAnchor,constant:-3),syncIndicator.widthAnchor.constraint(equalToConstant:24),syncIndicator.heightAnchor.constraint(equalToConstant:24)])
         updatedLabel.font = .systemFont(ofSize:11); updatedLabel.textColor = .secondaryLabelColor
         updatedLabel.lineBreakMode = .byTruncatingTail; updatedLabel.maximumNumberOfLines = 1
         updatedLabel.usesSingleLineMode = true; updatedLabel.cell?.truncatesLastVisibleLine = true
         updatedLabel.setContentCompressionResistancePriority(.defaultLow,for:.horizontal)
         updatedLabel.translatesAutoresizingMaskIntoConstraints = false; toolbar.addSubview(updatedLabel)
-        NSLayoutConstraint.activate([updatedLabel.leadingAnchor.constraint(equalTo:syncIndicator.trailingAnchor,constant:4),updatedLabel.centerYAnchor.constraint(equalTo:syncIndicator.centerYAnchor),updatedLabel.trailingAnchor.constraint(lessThanOrEqualTo:toolbar.trailingAnchor,constant:-130)])
         setLastUpdated(nil)
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow,for:.horizontal); footer.addArrangedSubview(spacer)
-        libraryToggle = button("list.bullet",help:"Show notes (⌘0)",action:#selector(library))
+        libraryToggle = button("list.bullet",help:"Show notes",action:#selector(library))
         libraryToggle.setButtonType(.toggle)
         footer.addArrangedSubview(libraryToggle)
         footer.addArrangedSubview(button("square.and.pencil",help:"New note (⌘N)",action:#selector(newNote)))
@@ -267,6 +260,14 @@ final class SourceTextView: NSTextView {
         pin.bezelStyle = .inline; pin.isBordered = false; pin.target = self; pin.action = #selector(togglePin); pin.toolTip = "Keep note on top"
         footer.addArrangedSubview(pin)
         footer.addArrangedSubview(button("trash",help:"Delete note",action:#selector(deleteNote)))
+        NSLayoutConstraint.activate([
+            syncIndicator.leadingAnchor.constraint(equalTo:toolbar.leadingAnchor,constant:12),
+            syncIndicator.centerYAnchor.constraint(equalTo:libraryToggle.centerYAnchor),
+            syncIndicator.widthAnchor.constraint(equalToConstant:24),syncIndicator.heightAnchor.constraint(equalToConstant:24),
+            updatedLabel.leadingAnchor.constraint(equalTo:syncIndicator.trailingAnchor,constant:4),
+            updatedLabel.centerYAnchor.constraint(equalTo:libraryToggle.centerYAnchor),
+            updatedLabel.trailingAnchor.constraint(lessThanOrEqualTo:toolbar.trailingAnchor,constant:-130)
+        ])
         content.addSubview(toast); toast.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([toast.centerXAnchor.constraint(equalTo:content.centerXAnchor),toast.bottomAnchor.constraint(equalTo:scrollView.bottomAnchor,constant:-8),toast.heightAnchor.constraint(equalToConstant:32),toast.leadingAnchor.constraint(greaterThanOrEqualTo:content.leadingAnchor,constant:14),toast.trailingAnchor.constraint(lessThanOrEqualTo:content.trailingAnchor,constant:-14)])
         updatePinImage()
@@ -443,55 +444,18 @@ final class SourceTextView: NSTextView {
         popover.show(relativeTo:anchor.bounds,of:anchor,preferredEdge:.maxY)
     }
     func dismissAttachmentPreview() { preview?.close() }
-    @objc func toggleScreenShareVisibility() { onScreenShareToggle?() }
-    func updatePresentation(active: Bool, starting: Bool, includesNote: Bool, error: String?) {
-        isPresenting = active; isStartingPresentation = starting
-        isScreenShareHidden = !includesNote; screenShareError = error
-        updateScreenShareControl()
-    }
-    func presentationSnapshot() -> NSImage? {
-        // Copy the visible writing area directly from AppKit, never from the
-        // display capture. The private controls and attachment popovers stay local.
-        scrollView.layoutSubtreeIfNeeded()
-        guard let bitmap = scrollView.bitmapImageRepForCachingDisplay(in:scrollView.bounds) else { return nil }
-        scrollView.effectiveAppearance.performAsCurrentDrawingAppearance {
-            scrollView.cacheDisplay(in:scrollView.bounds,to:bitmap)
-        }
-        let image = NSImage(size:scrollView.bounds.size)
-        image.addRepresentation(bitmap)
-        return image
-    }
     func updateNativeCapturePrivacy(_ enabled: Bool, captured: Bool) {
         guard nativeCapturePrivacy != enabled || screenIsCaptured != captured else { return }
         nativeCapturePrivacy = enabled; screenIsCaptured = captured; updateScreenShareControl()
     }
     private func updateScreenShareControl() {
-        header.forceReveal = isPresenting || isStartingPresentation || screenShareError != nil || (nativeCapturePrivacy && screenIsCaptured)
-        if nativeCapturePrivacy {
-            screenShareToggle.isHidden = !screenIsCaptured
-            let title = "Hidden in screen shares"
-            let help = "Experimental entire-screen hiding. macOS does not guarantee capture exclusion; verify the local note and a receiving participant."
-            screenShareToggle.title = title
-            screenShareToggle.image = NSImage(systemSymbolName:"eye.slash",accessibilityDescription:title)
-            screenShareToggle.state = .off; screenShareToggle.isEnabled = false
-            screenShareToggle.toolTip = help; screenShareToggle.setAccessibilityLabel(title)
-            screenShareToggle.setAccessibilityHelp(help)
-            return
-        }
-        screenShareToggle.isHidden = false
-        let title: String
-        if isStartingPresentation { title = "Starting…" }
-        else if screenShareError != nil { title = "Retry presentation" }
-        else if !isPresenting { title = "Present…" }
-        else { title = isScreenShareHidden ? "Private note" : "Note shared" }
+        let visible = nativeCapturePrivacy && screenIsCaptured
+        header.forceReveal = visible
+        screenShareToggle.isHidden = !visible
+        let title = "Hidden in screen shares"
+        let help = "Turn this off in Settings → General to show notes in screen shares. macOS does not guarantee capture exclusion."
         screenShareToggle.title = title
-        screenShareToggle.image = NSImage(systemSymbolName:screenShareError != nil ? "exclamationmark.triangle" : !isPresenting ? "rectangle.on.rectangle" : isScreenShareHidden ? "eye.slash" : "eye",accessibilityDescription:title)
-        screenShareToggle.state = isPresenting && !isScreenShareHidden ? .on : .off
-        screenShareToggle.isEnabled = canToggleScreenShareVisibility
-        screenShareToggle.contentTintColor = screenShareError != nil ? .systemOrange : isPresenting ? .controlAccentColor : .secondaryLabelColor
-        let help = screenShareError ?? (!isPresenting
-            ? "Choose a screen, then share the Memoize Presentation window in Meet. Entire-screen sharing includes your local notes."
-            : "\(isScreenShareHidden ? "Show" : "Hide") this note in the Memoize Presentation window. Your local note stays readable. In Meet, share that window rather than your entire screen.")
+        screenShareToggle.image = NSImage(systemSymbolName:"eye.slash",accessibilityDescription:title)
         screenShareToggle.toolTip = help; screenShareToggle.setAccessibilityLabel(title)
         screenShareToggle.setAccessibilityHelp(help)
     }
@@ -502,7 +466,8 @@ final class SourceTextView: NSTextView {
     func setLibraryVisible(_ visible: Bool) {
         libraryToggle.state = visible ? .on : .off
         libraryToggle.contentTintColor = visible ? .controlAccentColor : .secondaryLabelColor
-        let help = visible ? "Hide notes (⌘0)" : "Show notes (⌘0)"
+        let keys = KeyboardShortcuts.Name.toggleLibrary.shortcut?.description ?? "⌥⌘L"
+        let help = (visible ? "Hide notes" : "Show notes") + " (" + keys + ")"
         libraryToggle.toolTip = help; libraryToggle.setAccessibilityLabel(help); libraryToggle.setAccessibilityHelp(help)
     }
     private func updatePinImage() {

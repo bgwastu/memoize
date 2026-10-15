@@ -45,6 +45,7 @@ If macOS blocks the first launch, choose **System Settings → Privacy & Securit
 | Shortcut | Action |
 | --- | --- |
 | ⌥⌘X | Show or hide Memoize; configurable |
+| ⌥⌘L | Show or hide the notes list; configurable |
 | ⌘N | New note |
 | ⌘[ / ⌘] | Older / newer note; past newest opens a blank draft |
 | ⌘F / ⇧⌘F | Find in note / search all notes |

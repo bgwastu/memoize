@@ -48,10 +48,11 @@ final class SourceTextView: NSTextView {
     var onFile: ((URL) -> Void)?
     var navigate: ((Int) -> Void)?
     var globalSearch: (() -> Void)?
-    var onEmptyBackspace: (() -> Void)?
+    /// Return true when the empty note was handled. Return false to delete a remaining character.
+    var onEmptyBackspace: (() -> Bool)?
     override func deleteBackward(_ sender: Any?) {
-        if !hasMarkedText(), string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, let onEmptyBackspace {
-            onEmptyBackspace(); return
+        if !hasMarkedText(), string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, let onEmptyBackspace, onEmptyBackspace() {
+            return
         }
         super.deleteBackward(sender)
     }

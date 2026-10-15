@@ -20,6 +20,8 @@ import ScreenCaptureKit
     private var current: Note?
     private var temporary = false
     private var newNoteID: String?
+    /// The new note has had real content, so leaving it empty must delete the saved copy.
+    private var newNoteCaptured = false
     private var draftAttachments: [String:RemoteAttachment] = [:]
     private var draftReturnID: String?
     private var navigationID: String?
@@ -133,7 +135,7 @@ import ScreenCaptureKit
         let directory = support.appending(path:namespace,directoryHint:.isDirectory)
         let newStore = try await Task.detached(priority:.userInitiated) { try LocalStore(directory:directory) }.value
         clearNotice(); syncState = .local; statusText = "Saved on this Mac"
-        store = newStore; cache = [:]; current = nil; navigationID = nil; temporary = false; newNoteID = nil; draftReturnID = nil; draftAttachments = [:]
+        store = newStore; cache = [:]; current = nil; navigationID = nil; temporary = false; newNoteID = nil; newNoteCaptured = false; draftReturnID = nil; draftAttachments = [:]
         try await refresh()
     }
     private func connectUI() {
@@ -148,7 +150,13 @@ import ScreenCaptureKit
         editor.onNew = { [weak self] in self?.newNote() }
         editor.onLibrary = { [weak self] in self?.toggleLibrary() }
         editor.onDelete = { [weak self] in self?.deleteNote() }
-        editor.textView.onEmptyBackspace = { [weak self] in self?.deleteNote() }
+        editor.textView.onEmptyBackspace = { [weak self] in
+            guard let self else { return false }
+            // Backspace in an empty new note stays there. Leaving is what deletes it.
+            if let id = self.newNoteID, id == self.current?.id { return false }
+            self.deleteNote()
+            return true
+        }
         editor.onPin = { [weak self] in self?.setPinnedWindows($0) }
         editor.onScreenShareToggle = { [weak self] in
             guard !NativeWindowPrivacy.isEnabled else { return }
@@ -302,9 +310,15 @@ import ScreenCaptureKit
         guard var note = current else { return }
         if let removal = attachmentUndo, removal.noteID == note.id { removal.restoration.source = text }
         let empty = text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty
-        if empty, !temporary, newNoteID == note.id { discardEmptyNewNote(note,content:text); return }
+        // Stay on this note while it is empty. Deletion waits until the user leaves.
+        if empty, newNoteID == note.id {
+            note.content = text; current = note; cache[note.id] = note; temporary = true
+            autosave?.cancel(); autosave = nil; editGeneration += 1; hasUnsavedText = false; firstUnsaved = nil
+            showStatus(); return
+        }
         if temporary, !empty {
-            note.created = Date(); note.modified = note.created; temporary = false
+            if !newNoteCaptured { note.created = Date() }
+            note.modified = Date(); temporary = false; newNoteCaptured = true
             // Native Undo can restore an attachment after a cleared capture received
             // a fresh identity. Its cached bytes must follow the restored source.
             note.attachments += draftAttachments.values.filter { image in
@@ -333,7 +347,7 @@ import ScreenCaptureKit
         editGeneration += 1; openGeneration += 1; hasUnsavedText = false; firstUnsaved = nil
         var blank = Note(); blank.content = content
         if let removal = attachmentUndo, removal.noteID == discarded.id { removal.noteID = blank.id; removal.wasDraft = true }
-        current = blank; navigationID = blank.id; newNoteID = blank.id; temporary = true
+        current = blank; navigationID = blank.id; newNoteID = blank.id; newNoteCaptured = false; temporary = true
         cache.removeValue(forKey:discarded.id); all.removeAll { $0.id == discarded.id }
         editor.continueDraft(as:blank.id)
         showStatus()
@@ -366,6 +380,9 @@ import ScreenCaptureKit
         if !sameSource(note.content,editor.textView.string) { edited(editor.textView.string); flush(); return }
         guard !temporary else { return }
         guard hasUnsavedText else { return }
+        if newNoteID == note.id, note.content.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+            hasUnsavedText = false; firstUnsaved = nil; return
+        }
         let selection = editor.textView.selectedRange(); note.cursor = selection.location; note.selectionLength = selection.length; note.scroll = editor.scrollView.contentView.bounds.origin.y
         current = note; cache[note.id] = note
         let snapshot = note; let generation = editGeneration; let previous = saveQueue
@@ -416,7 +433,8 @@ import ScreenCaptureKit
         rememberPosition(immediate:true); flush(); openGeneration += 1; let generation = openGeneration
         navigationID = id
         if let note = unsavedRecovery[id] ?? cache[id] {
-            temporary = false; newNoteID = nil; draftAttachments = [:]
+            if let abandonedID = emptyCapturedNewNoteID() { deleteAbandonedNewNote(abandonedID) }
+            temporary = false; newNoteID = nil; newNoteCaptured = false; draftAttachments = [:]
             install(note,show:show,direction:direction); if let query { editor.find(query:query) }
         }
         else {
@@ -427,7 +445,8 @@ import ScreenCaptureKit
                     // input that arrived while the database read was suspended.
                     rememberPosition(immediate:true); flush()
                     guard generation == openGeneration else { return }
-                    temporary = false; newNoteID = nil; draftAttachments = [:]
+                    if let abandonedID = emptyCapturedNewNoteID() { deleteAbandonedNewNote(abandonedID) }
+                    temporary = false; newNoteID = nil; newNoteCaptured = false; draftAttachments = [:]
                     install(note,show:show,direction:direction)
                     if let query { editor.find(query:query) }
                 } catch { showError(error) }
@@ -453,6 +472,7 @@ import ScreenCaptureKit
         rememberPosition(immediate:true); flush(); openGeneration += 1
         draftReturnID = current?.id
         draftAttachments = [:]
+        newNoteCaptured = false
         let note = Note(); navigationID = note.id; newNoteID = note.id; temporary = true; install(note,show:show,direction:direction)
         if show && notify { showNewNoteNotice() }
     }
@@ -502,7 +522,7 @@ import ScreenCaptureKit
         // share an AppKit event boundary with the navigation shortcut.
         flush()
         if temporary {
-            let previous = draftReturnID.flatMap { id in all.contains(where:{ $0.id == id }) ? id : nil } ?? all.first?.id
+            let previous = draftReturnID.flatMap { id in id != current?.id && all.contains(where:{ $0.id == id }) ? id : nil } ?? all.first { $0.id != current?.id }?.id
             if direction > 0, let previous { openNote(previous,direction:direction) }
             return
         }
@@ -538,8 +558,11 @@ import ScreenCaptureKit
         flush()
         guard let note = current, !deleting.contains(note.id) else { return }
         if editor.textView.string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, note.attachments.isEmpty {
-            if temporary { leaveDeletedNote(note.id); showDeletionNotice() }
-            else { commitDeletion(note.id) }
+            if temporary {
+                let captured = newNoteCaptured && newNoteID == note.id
+                leaveDeletedNote(note.id)
+                if !captured { showDeletionNotice() }
+            } else { commitDeletion(note.id) }
             return
         }
         let alert = NSAlert()
@@ -582,8 +605,38 @@ import ScreenCaptureKit
         hasUnsavedText = false; autosave?.cancel(); positionTask?.cancel()
         if let destination { openNote(destination,direction:1) }
         else {
-            temporary = false; current = nil
+            if emptyCapturedNewNoteID() != nil { deleteAbandonedNewNote(id) }
+            temporary = false; current = nil; newNoteCaptured = false
             newNote(notify:false)
+        }
+    }
+    /// A new note that was saved, then emptied, and is now being left.
+    private func emptyCapturedNewNoteID() -> String? {
+        guard newNoteCaptured, let id = newNoteID, current?.id == id,
+              editor.textView.string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return nil }
+        return id
+    }
+    /// Queue the delete behind any save of the note's last real text.
+    private func deleteAbandonedNewNote(_ id: String) {
+        let discarded = cache[id] ?? (current?.id == id ? current : nil)
+        cache.removeValue(forKey:id); all.removeAll { $0.id == id }
+        guard let store else { return }
+        let previous = saveQueue
+        saveQueue = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            do {
+                if try await store.note(id) != nil {
+                    try await store.markDelete(id,undoInterval:0)
+                    showDeletionNotice()
+                }
+                unsavedRecovery.removeValue(forKey:id)
+                if unsavedRecovery.isEmpty { diskError = nil }
+                try await refresh()
+            } catch {
+                if let discarded { unsavedRecovery[id] = discarded }
+                diskError = error.localizedDescription; showStatus()
+            }
         }
     }
     private func showDeletionNotice(notify: Bool = true) {
@@ -594,7 +647,11 @@ import ScreenCaptureKit
         guard let store, var note = target ?? current else { return }
         if let selected = current, selected.id == note.id {
             note = selected
-            if temporary { note.created = Date(); note.modified = note.created; current = note }
+            if temporary {
+                if !newNoteCaptured { note.created = Date(); note.modified = note.created }
+                else { note.modified = Date() }
+                newNoteCaptured = true; current = note
+            }
             temporary = false; hasUnsavedText = true; flush()
         } else if note.base == nil, note.content.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
             note.created = Date(); note.modified = note.created
@@ -963,6 +1020,22 @@ import ScreenCaptureKit
     }
     private func smokeTest() async throws {
         try await openStore(namespace:"smoke-" + UUID().uuidString)
+        if ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_NEW_NOTE"] == "1" {
+            guard let store else { throw MemoizeError.message("Missing new-note smoke store.") }
+            let seed = try await store.saveEdit(Note(),content:"Previous note",tags:[],cursor:0,selectionLength:0,scroll:0)
+            temporary = false; newNoteID = nil; newNoteCaptured = false
+            install(seed,show:true); try await refresh()
+            for _ in 0..<80 {
+                if NSApp.isActive { break }
+                try await Task.sleep(for:.milliseconds(25))
+            }
+            guard NSApp.isActive else { throw MemoizeError.message("macOS did not grant the new-note smoke foreground activation.") }
+            try await smokeNewNoteLifecycle()
+            try await smokeMenuAndDeletion()
+            try await smokeAttachmentPresentation()
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+            return
+        }
         NativeWindowPrivacy.testOverride = false
         applyNativePrivacy()
         if ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_LIST_LAYOUT_ONLY"] == "1" {
@@ -1151,7 +1224,7 @@ import ScreenCaptureKit
         try await smokeNewNoteLifecycle()
         try await smokeRapidTyping()
         openNote(original)
-        FileHandle.standardOutput.write(Data("Memoize UI smoke passed: app-wide hide/restore including Settings, Cmd+` focus/cursor restoration, directional slides, TextKit 2, exact-word find, search excerpts, pin ordering, menu-bar visibility, manual hide, hover/toast-only toolbar, first-input timestamps, new-note discard and Undo/Redo, immediate Clear → Back toast, reopened empty-note preservation, offline attachments and attachment Undo/Redo, editor → SQLite → library.\n".utf8))
+        FileHandle.standardOutput.write(Data("Memoize UI smoke passed: app-wide hide/restore including Settings, Cmd+` focus/cursor restoration, directional slides, TextKit 2, exact-word find, search excerpts, pin ordering, menu-bar visibility, manual hide, hover/toast-only toolbar, first-input timestamps, empty new note kept until Back, Undo/Redo, reopened empty-note preservation, offline attachments and attachment Undo/Redo, editor → SQLite → library.\n".utf8))
         if let seconds = ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_IDLE_SECONDS"].flatMap(Double.init) { try await Task.sleep(for:.seconds(seconds)) }
         // Leave the Swift task before AppKit enters its deferred-termination event loop.
         DispatchQueue.main.async { NSApp.terminate(nil) }
@@ -1489,27 +1562,27 @@ import ScreenCaptureKit
         editor.hide(); try await Task.sleep(for:.milliseconds(100)); editor.show(); try await Task.sleep(for:.milliseconds(100))
         guard newNoteID == first.id else { throw MemoizeError.message("Hiding ended the new-note session.") }
         try await replace(""); await saveQueue?.value
-        guard temporary, current?.id != first.id,
-              try await store.note(first.id)?.deleteAfter != nil,
+        guard temporary, current?.id == first.id, editor.textView.string.isEmpty,
+              try await store.note(first.id)?.deleteAfter == nil,
               try await store.note(first.id)?.content == "First capture",
-              !all.contains(where:{ $0.id == first.id }) else { throw MemoizeError.message("Cleared new note was retained or saved as empty.") }
-        guard editor.toolbar.isRevealed, editor.toast.message.stringValue == "Note deleted" else { throw MemoizeError.message("Discard did not show the deletion toast.") }
+              briefNotice?.message != "Note deleted" else { throw MemoizeError.message("Clearing a new note deleted it before leaving: id=\(current?.id ?? "none"), deleteAfter=\(String(reflecting:try await store.note(first.id)?.deleteAfter)), notice=\(briefNotice?.message ?? "none").") }
         try await Task.sleep(for:.milliseconds(75))
-        let restoredAfter = Date()
         try await smokeKey("z",code:6,modifiers:.command); flush(); await saveQueue?.value
         let restored = try requireSmoke(current)
         let restoredOnDisk = try await store.note(restored.id)
-        guard restored.content == "First capture", restored.id != first.id, restored.created >= restoredAfter,
-              restoredOnDisk?.content == "First capture" else { throw MemoizeError.message("Undo across an empty draft failed: source=\(String(reflecting:restored.content)), visible=\(String(reflecting:editor.textView.string)), disk=\(String(reflecting:restoredOnDisk?.content)), freshID=\(restored.id != first.id), timeDelta=\(restored.created.timeIntervalSince(restoredAfter)), canRedo=\(editor.textView.ownUndoManager.canRedo).") }
+        guard restored.content == "First capture", restored.id == first.id,
+              abs(restored.created.timeIntervalSince(first.created)) < 0.001,
+              restoredOnDisk?.content == "First capture", editor.textView.ownUndoManager.canRedo else { throw MemoizeError.message("Undo across an empty new note failed: source=\(String(reflecting:restored.content)), visible=\(String(reflecting:editor.textView.string)), disk=\(String(reflecting:restoredOnDisk?.content)), sameID=\(restored.id == first.id), timeDelta=\(restored.created.timeIntervalSince(first.created)), canRedo=\(editor.textView.ownUndoManager.canRedo).") }
         try await Task.sleep(for:.milliseconds(75))
         try await smokeKey("Z",code:6,modifiers:[.command,.shift]); await saveQueue?.value
-        guard temporary, editor.textView.string.isEmpty,
-              try await store.note(restored.id)?.deleteAfter != nil else { throw MemoizeError.message("Redo did not discard the restored new note.") }
+        guard temporary, current?.id == first.id, editor.textView.string.isEmpty,
+              try await store.note(first.id)?.deleteAfter == nil,
+              briefNotice?.message != "Note deleted" else { throw MemoizeError.message("Redo discarded the new note while it was still open.") }
 
         let unsavedID = try requireSmoke(current?.id)
         try await replace("Before autosave"); try await replace(""); navigate(1); await saveQueue?.value
-        guard try await store.note(unsavedID) == nil,
-              editor.toolbar.isRevealed, editor.toast.message.stringValue == "Note deleted" else { throw MemoizeError.message("Clear then immediate Back retained a draft or lost its deletion toast.") }
+        guard try await store.note(unsavedID)?.deleteAfter != nil, !all.contains(where:{ $0.id == unsavedID }),
+              editor.toolbar.isRevealed, editor.toast.message.stringValue == "Note deleted" else { throw MemoizeError.message("Clear then immediate Back retained a draft or lost its deletion toast: deleteAfter=\(String(reflecting:try await store.note(unsavedID)?.deleteAfter)), listed=\(all.contains(where:{ $0.id == unsavedID })), notice=\(editor.toast.message.stringValue).") }
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             navigate(-1)
             guard let transition = editor.scrollView.layer?.animation(forKey:kCATransition) as? CATransition,
@@ -1539,12 +1612,14 @@ import ScreenCaptureKit
         try await smokeKey("z",code:6,modifiers:.command)
         guard editor.textView.string == imageNote.content else { throw MemoizeError.message("Undo after image paste also undid the image insertion.") }
         try await replace(""); await saveQueue?.value
-        guard temporary, try await store.note(imageNote.id)?.deleteAfter != nil else { throw MemoizeError.message("Cleared image-first note was not discarded.") }
+        guard temporary, current?.id == imageNote.id, try await store.note(imageNote.id)?.deleteAfter == nil,
+              briefNotice?.message != "Note deleted" else { throw MemoizeError.message("Cleared image-first note was discarded while it was still open.") }
         try await smokeKey("z",code:6,modifiers:.command); flush(); await saveQueue?.value
         let restoredImage = try requireSmoke(current)
-        guard restoredImage.content == imageNote.content,
+        guard restoredImage.id == imageNote.id, restoredImage.content == imageNote.content,
               restoredImage.attachments == imageNote.attachments,
-              try await store.needsAttachmentCopy(restoredImage) else { throw MemoizeError.message("Undo did not restore a cleared image capture's attachment metadata: content=\(String(reflecting:restoredImage.content)), expected=\(String(reflecting:imageNote.content)), attachments=\(restoredImage.attachments.count)/\(imageNote.attachments.count), temporary=\(temporary), historyImages=\(draftAttachments.count).") }
+              abs(restoredImage.created.timeIntervalSince(imageNote.created)) < 0.001,
+              try await store.needsAttachmentCopy(restoredImage) == false else { throw MemoizeError.message("Undo did not restore a cleared image capture: content=\(String(reflecting:restoredImage.content)), expected=\(String(reflecting:imageNote.content)), attachments=\(restoredImage.attachments.count)/\(imageNote.attachments.count), sameID=\(restoredImage.id == imageNote.id), temporary=\(temporary), historyImages=\(draftAttachments.count).") }
         FileHandle.standardOutput.write(Data("New-note lifecycle passed: two-hour blank, whitespace, first text/image, clear before/after save, deletion toast, native Undo/Redo, hide/reveal, leave/reopen.\n".utf8))
     }
     private func smokeRapidTyping() async throws {
@@ -1710,16 +1785,21 @@ import ScreenCaptureKit
         newNote()
         let draft = try requireSmoke(current?.id)
         editor.textView.deleteBackward(nil)
-        guard current?.id == kept.id, !temporary, deletionAlert == nil,
-              editor.toast.message.stringValue == "Note deleted", try await store.note(draft) == nil else { throw MemoizeError.message("Backspace did not discard an empty draft and restore its previous note.") }
+        guard current?.id == draft, temporary, deletionAlert == nil, briefNotice?.message != "Note deleted",
+              try await store.note(draft) == nil else { throw MemoizeError.message("Backspace deleted an empty new note or left it.") }
+        navigate(1)
+        guard current?.id == kept.id, newNoteID == nil else { throw MemoizeError.message("Leaving an unsaved new note did not return to the previous note.") }
         newNote()
         editor.textView.insertText("New capture",replacementRange:editor.textView.selectedRange())
         flush(); await saveQueue?.value
         let cleared = try requireSmoke(current?.id)
         editor.textView.insertText("",replacementRange:NSRange(location:0,length:editor.textView.string.utf16.count))
-        editor.textView.deleteBackward(nil); await saveQueue?.value
+        editor.textView.deleteBackward(nil)
+        guard current?.id == cleared, temporary, deletionAlert == nil,
+              try await store.note(cleared)?.deleteAfter == nil, briefNotice?.message != "Note deleted" else { throw MemoizeError.message("Clear then Backspace discarded a new note that was still open.") }
+        navigate(1); await saveQueue?.value
         guard current?.id == kept.id, deletionAlert == nil,
-              try await store.note(cleared)?.deleteAfter != nil, editor.toast.message.stringValue == "Note deleted" else { throw MemoizeError.message("Clear then Backspace failed to discard a new capture and return to the previous note.") }
+              try await store.note(cleared)?.deleteAfter != nil, editor.toast.message.stringValue == "Note deleted" else { throw MemoizeError.message("Clear then Back failed to discard a new capture and return to the previous note.") }
         // A normal Backspace must still edit text, never delete a nonempty note.
         editor.textView.setSelectedRange(NSRange(location:editor.textView.string.utf16.count,length:0))
         editor.textView.deleteBackward(nil)
@@ -1751,7 +1831,7 @@ import ScreenCaptureKit
         editor.panel.endSheet(photoAlert.window,returnCode:.alertFirstButtonReturn)
         try await Task.sleep(for:.milliseconds(200))
         guard try await store.note("photo-only")?.deleteAfter == nil else { throw MemoizeError.message("An image-only note was mistaken for an empty note.") }
-        FileHandle.standardOutput.write(Data("Menu/deletion passed: independent close, active toggle, shared pinning, background tooltips, empty-draft Backspace, Clear then Backspace, normal Backspace, Cancel, confirmed deletion with Undo, empty saved note, image-only protection.\n".utf8))
+        FileHandle.standardOutput.write(Data("Menu/deletion passed: independent close, active toggle, shared pinning, background tooltips, empty new note stays on Backspace, Clear then Back deletes, normal Backspace, Cancel, confirmed deletion with Undo, empty saved note, image-only protection.\n".utf8))
     }
     private func smokeAttachmentPresentation() async throws {
         guard let store else { throw MemoizeError.message("Missing attachment test store.") }
@@ -1860,12 +1940,11 @@ import ScreenCaptureKit
         let imageOnly = try requireSmoke(current)
         let imageFile = try requireSmoke(editor.attachmentStrip.files.first)
         removeAttachment(imageFile); await saveQueue?.value
-        guard temporary, current?.id != imageOnly.id, briefNotice?.undo != nil,
-              editor.toast.message.stringValue == "Attachment removed" else { throw MemoizeError.message("Removing the only attachment lost its Undo during empty-capture cleanup.") }
-        let restoredAfter = Date()
+        guard temporary, current?.id == imageOnly.id, briefNotice?.undo != nil,
+              editor.toast.message.stringValue == "Attachment removed" else { throw MemoizeError.message("Removing the only attachment deleted the new note or lost its Undo.") }
         editor.toast.undoButton.performClick(nil); await noticeUndoTask?.value; await saveQueue?.value
-        guard !temporary, current?.id != imageOnly.id, current?.attachments.count == 1,
-              sameSource(editor.textView.string,imageOnly.content), (current?.created ?? .distantPast) >= restoredAfter else { throw MemoizeError.message("Image-only toast Undo didn't restore a fresh capture with its file and correct creation time.") }
+        guard !temporary, current?.id == imageOnly.id, current?.attachments.count == 1,
+              sameSource(editor.textView.string,imageOnly.content), current?.created == imageOnly.created else { throw MemoizeError.message("Image-only toast Undo didn't restore the capture with its file and creation time.") }
         // A user can erase the Markdown reference before removing its file.
         // Removing only metadata must survive an earlier autosave finishing.
         let metadataNote = try await store.saveEdit(Note(),content:"Keep my text",tags:[],cursor:12,selectionLength:0,scroll:0)

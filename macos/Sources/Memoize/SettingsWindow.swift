@@ -1,8 +1,10 @@
 import AppKit
+import Combine
 import SwiftUI
 import ServiceManagement
 import KeyboardShortcuts
 import MemoizeCore
+import Sparkle
 
 extension KeyboardShortcuts.Name {
     static let toggleNote = Self("toggleNote",initial:.init(.x,modifiers:[.option,.command]))
@@ -22,7 +24,7 @@ extension KeyboardShortcuts.Name {
         didSet { UserDefaults.standard.set(appearance.rawValue,forKey:"appearance"); appearance.apply() }
     }
     @Published var dock = UserDefaults.standard.object(forKey:"showDock") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(dock,forKey:"showDock"); NSApp.setActivationPolicy(dock ? .regular : .accessory) }
+        didSet { UserDefaults.standard.set(dock,forKey:"showDock"); NSApp.setActivationPolicy(dock ? .regular : .accessory); onActivationPolicyChange?() }
     }
     @Published var menuBar = UserDefaults.standard.object(forKey:"showMenuBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(menuBar,forKey:"showMenuBar"); onMenuBarVisibility?(menuBar) }
@@ -37,7 +39,9 @@ extension KeyboardShortcuts.Name {
     @Published var login = SMAppService.mainApp.status == .enabled
     var connect: ((String,String) async throws -> Void)?
     var onMenuBarVisibility: ((Bool) -> Void)?
+    var onActivationPolicyChange: (() -> Void)?
     var onScreenSharePrivacyChange: ((Bool) -> Void)?
+    var updater: SPUUpdater?
     var hasSavedToken: Bool {
         guard !account.isEmpty, let entered = try? MemosClient.normalizedServer(server), let saved = try? MemosClient.normalizedServer(savedServer) else { return false }
         return entered == saved
@@ -88,10 +92,39 @@ private struct GeneralSettings: View {
             Section("Screen sharing (experiments)") {
                 Toggle("Hide notes in screen shares",isOn:$model.hideNotesInScreenShares)
             }
+            if let updater = model.updater {
+                Section("Updates") { UpdateSettings(updater:updater) }
+            }
             Section {
                 LabeledContent("Memoize",value:Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "")
             }
-        }.formStyle(.grouped).padding(12).frame(width:540,height:470)
+        }.formStyle(.grouped).padding(12).frame(width:540,height:model.updater == nil ? 470 : 620)
+    }
+}
+
+/// Sparkle persists these two switches itself. Write them only after the user changes one.
+private struct UpdateSettings: View {
+    private let updater: SPUUpdater
+    @State private var checks: Bool
+    @State private var downloads: Bool
+    @State private var canCheck: Bool
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        checks = updater.automaticallyChecksForUpdates
+        downloads = updater.automaticallyDownloadsUpdates
+        canCheck = updater.canCheckForUpdates
+    }
+    var body: some View {
+        Toggle("Automatically check for updates",isOn:$checks)
+            .onChange(of:checks) { _, value in updater.automaticallyChecksForUpdates = value }
+        Toggle("Automatically download updates",isOn:$downloads)
+            .disabled(!checks || !updater.allowsAutomaticUpdates)
+            .onChange(of:downloads) { _, value in updater.automaticallyDownloadsUpdates = value }
+        HStack {
+            Spacer()
+            Button("Check for Updates…") { updater.checkForUpdates() }.disabled(!canCheck)
+        }
+        .onReceive(updater.publisher(for:\.canCheckForUpdates)) { canCheck = $0 }
     }
 }
 
@@ -151,7 +184,7 @@ private struct ShortcutSettings: View {
         let saved = UserDefaults.standard.string(forKey:"settingsPane")
         tabStyle = .toolbar
         let panes: [(String,String,CGFloat,NSViewController)] = [
-            ("General","gearshape",470,NSHostingController(rootView:GeneralSettings(model:model))),
+            ("General","gearshape",model.updater == nil ? 470 : 620,NSHostingController(rootView:GeneralSettings(model:model))),
             ("Memos","server.rack",330,NSHostingController(rootView:MemosSettings(model:model))),
             ("Shortcuts","keyboard",460,NSHostingController(rootView:ShortcutSettings()))
         ]

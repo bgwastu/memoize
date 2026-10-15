@@ -13,7 +13,8 @@ import ScreenCaptureKit
     private let settings = SettingsWindow()
     private let presentation = DesktopPresentation()
     private let captureMonitor = ScreenCaptureMonitor()
-    private var statusItem: NSStatusItem!
+    private var statusItem: NSStatusItem?
+    private var statusMenu: NSMenu?
     private var store: LocalStore?
     private var sync: SyncEngine?
     private var client: MemosClient?
@@ -87,6 +88,7 @@ import ScreenCaptureKit
         if !ProcessInfo.processInfo.arguments.contains("--smoke-test"),
            !ProcessInfo.processInfo.arguments.contains("--connect-stdin") {
             updater = SPUStandardUpdaterController(startingUpdater:true,updaterDelegate:nil,userDriverDelegate:nil)
+            settings.model.updater = updater?.updater
         }
         #endif
         editor = NoteEditor(); library = LibraryWindow(); installMenus(); connectUI()
@@ -207,7 +209,8 @@ import ScreenCaptureKit
         library.onSettings = { [weak self] in self?.settings.show() }
         library.onSearch = { [weak self] _,_ in self?.scheduleSearch() }
         settings.model.connect = { [weak self] server,token in try await self?.configure(server:server,token:token) }
-        settings.model.onMenuBarVisibility = { [weak self] in self?.statusItem.isVisible = $0 }
+        settings.model.onMenuBarVisibility = { [weak self] in self?.setMenuBarVisible($0) }
+        settings.model.onActivationPolicyChange = { [weak self] in guard let self else { return }; self.setMenuBarVisible(self.settings.model.menuBar) }
         settings.model.onScreenSharePrivacyChange = { [weak self] _ in self?.applyNativePrivacy() }
         captureMonitor.onChange = { [weak self] captured in
             self?.editor.updateNativeCapturePrivacy(NativeWindowPrivacy.isEnabled,captured:captured)
@@ -958,9 +961,26 @@ import ScreenCaptureKit
         status.addItem(item("Sync Now",#selector(syncAction))); status.addItem(item("Settings…",#selector(settingsAction))); status.addItem(.separator())
         if let statusUpdates = updates.copy() as? NSMenuItem { status.addItem(statusUpdates) }
         let statusQuit = item("Quit Memoize",#selector(NSApplication.terminate(_:))); statusQuit.target = NSApp; status.addItem(statusQuit)
-        statusItem = NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength); statusItem.button?.image = NSImage(systemSymbolName:"note.text",accessibilityDescription:"Memoize"); statusItem.menu = status
-        NativeWindowPrivacy.statusBarWindow = statusItem.button?.window
-        statusItem.isVisible = UserDefaults.standard.bool(forKey:"showMenuBar")
+        statusMenu = status
+        setMenuBarVisible(UserDefaults.standard.bool(forKey:"showMenuBar"))
+    }
+    /// `text.page` matches the app icon at menu-bar size: a page with two long lines and one short line.
+    private func menuBarImage() -> NSImage {
+        let symbol = NSImage(systemSymbolName:"text.page",accessibilityDescription:"Memoize") ?? NSImage(systemSymbolName:"note.text",accessibilityDescription:"Memoize")!
+        let image = symbol.withSymbolConfiguration(.init(pointSize:16,weight:.medium)) ?? symbol
+        image.isTemplate = true
+        return image
+    }
+    private func setMenuBarVisible(_ visible: Bool) {
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem); self.statusItem = nil }
+        NativeWindowPrivacy.statusBarWindow = nil
+        guard visible, let statusMenu else { return }
+        let item = NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength)
+        item.menu = statusMenu
+        item.button?.image = menuBarImage()
+        item.isVisible = true
+        statusItem = item
+        NativeWindowPrivacy.statusBarWindow = item.button?.window
     }
     private func showError(_ error: any Error) { statusText = error.localizedDescription; syncState = .failed; showStatus(); library?.status.stringValue = statusText }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -1145,7 +1165,9 @@ import ScreenCaptureKit
         editor.setPinned(wasPinned)
         let menuBarWasVisible = settings.model.menuBar
         settings.model.menuBar = false
-        guard !statusItem.isVisible else { throw MemoizeError.message("Menu-bar setting did not hide the icon.") }
+        guard statusItem == nil else { throw MemoizeError.message("Menu-bar setting did not hide the icon.") }
+        settings.model.menuBar = true
+        guard let item = statusItem, item.isVisible, item.button?.image != nil, let window = item.button?.window, NativeWindowPrivacy.isStatusItemWindow(window) else { throw MemoizeError.message("Menu-bar setting did not restore the icon.") }
         settings.model.menuBar = menuBarWasVisible
         try await smokeEdit { self.settings.show() }
         try await Task.sleep(for:.milliseconds(500))
@@ -1272,7 +1294,7 @@ import ScreenCaptureKit
                     NativeWindowPrivacy.testOverride = nil
                     settings.model.hideNotesInScreenShares = command == "private"
                     applyNativePrivacy()
-                    let noteWindows = NSApp.windows.filter { $0 !== NativeWindowPrivacy.statusBarWindow }
+                    let noteWindows = NSApp.windows.filter { !NativeWindowPrivacy.isStatusItemWindow($0) }
                     guard noteWindows.allSatisfy({ $0.sharingType == (NativeWindowPrivacy.isEnabled ? .none : .readOnly) }) else {
                         let unprotected = noteWindows.filter({ $0.sharingType != (NativeWindowPrivacy.isEnabled ? .none : .readOnly) })
                         let details = unprotected.map { "\(type(of:$0)) visible=\($0.isVisible) sharing=\($0.sharingType.rawValue)" }.joined(separator:", ")
@@ -1288,7 +1310,7 @@ import ScreenCaptureKit
                     try Data("PRIVATE SYNTHETIC ATTACHMENT".utf8).write(to:file)
                     editor.showAttachment(at:file,anchor:editor.screenShareToggle)
                     try await Task.sleep(for:.milliseconds(200))
-                    guard NSApp.windows.filter({ $0.isVisible && $0 !== NativeWindowPrivacy.statusBarWindow }).allSatisfy({ $0.sharingType == .none }) else {
+                    guard NSApp.windows.filter({ $0.isVisible && !NativeWindowPrivacy.isStatusItemWindow($0) }).allSatisfy({ $0.sharingType == .none }) else {
                         throw MemoizeError.message("A native attachment preview was not protected.")
                     }
                     editor.dismissAttachmentPreview()

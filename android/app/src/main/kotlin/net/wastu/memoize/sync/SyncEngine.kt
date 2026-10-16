@@ -101,7 +101,7 @@ class SyncEngine(
                 for (file in current.attachments.filter { !it.uploaded }) {
                     val original = durableOriginal(file)
                     val uploaded = api.upload(file, original).copy(localPath = original.absolutePath)
-                    notes.updateAttachment(current.id, uploaded)
+                    notes.updateAttachment(current.id, file.id, uploaded)
                 }
                 val sent = notes.beginSendIfUnchanged(current.id, current.revision) ?: continue
                 val result = if (sent.base == null) api.create(sent.id, sent.snapshot())

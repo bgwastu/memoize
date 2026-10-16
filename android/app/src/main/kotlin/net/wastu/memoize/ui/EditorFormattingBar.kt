@@ -94,6 +94,8 @@ internal fun EditorFormattingBar(state: NativeSourceState, enabled: Boolean, can
                     sourceIndent(state.text, state.selection, false) != null) { state.indent(false) }
                 FormattingButton(R.drawable.ic_format_indent_decrease, "Outdent", commands &&
                     sourceIndent(state.text, state.selection, true) != null) { state.indent(true) }
+                FormattingButton(R.drawable.ic_checklist, "Checklist", commands) { state.formatBlock(SourceBlockFormat.CHECKLIST) }
+                FormattingButton(R.drawable.ic_attach, "Attach file or photo", enabled && canAttach, action = onAttach)
             }
             Box {
                 FormattingButton(R.drawable.ic_more, "More formatting", enabled) { menu = FormattingMenu.MORE }

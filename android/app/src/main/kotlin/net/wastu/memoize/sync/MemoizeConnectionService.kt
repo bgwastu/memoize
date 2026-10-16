@@ -46,6 +46,11 @@ class MemoizeConnectionService(private val graph: AppGraph, private val allowLoo
     private var wakeJob: Job? = null
     private var repeatSync = false
     private var forceRequested = false
+    private var currentToken: String? = null
+    private var currentServerUri: java.net.URI? = null
+
+    fun authenticatedToken(): String? = currentToken
+    fun currentServer(): java.net.URI? = currentServerUri
 
     init {
         graph.scope.launch {
@@ -58,6 +63,8 @@ class MemoizeConnectionService(private val graph: AppGraph, private val allowLoo
                     settingsFlow.value = ConnectionSettings(config.server, config.user.removePrefix("users/"), connected = true)
                     val credentials = accounts.load()
                     if (credentials != null) {
+                        currentToken = credentials.token
+                        currentServerUri = java.net.URI.create(config.server)
                         activeApi = MemosClient(config.server, credentials.token, config.user, allowLoopbackForTests)
                         engine = SyncEngine(notes, requireNotNull(activeApi))
                         statusFlow.value = SyncStatus("Saved on this device")
@@ -132,6 +139,8 @@ class MemoizeConnectionService(private val graph: AppGraph, private val allowLoo
                 accounts.save(AccountCredentials(config, token))
                 notes.importLocalDrafts()
                 graph.repository.value = notes
+                currentToken = token
+                currentServerUri = java.net.URI.create(normalized)
                 activeApi = MemosClient(normalized, token, user, allowLoopbackForTests)
                 engine = SyncEngine(notes, requireNotNull(activeApi))
                 notes.setMetadata("authenticationPaused", "false")
@@ -155,6 +164,14 @@ class MemoizeConnectionService(private val graph: AppGraph, private val allowLoo
         graph.repository.value.retry()
         graph.repository.value.setMetadata("retryAt", "")
         trigger(force = true)
+    }
+
+    override suspend fun sync(force: Boolean): Boolean {
+        ready.await()
+        if (engine == null) return true
+        trigger(force = force)
+        syncJob?.join()
+        return true
     }
 
     suspend fun runBackground(): Boolean {

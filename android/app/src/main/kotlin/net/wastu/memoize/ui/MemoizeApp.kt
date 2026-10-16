@@ -44,6 +44,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExpandedFullScreenSearchBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.InputChip
@@ -106,6 +108,18 @@ import net.wastu.memoize.data.NoteFilter
 import net.wastu.memoize.data.NoteSort
 import net.wastu.memoize.data.NoteResult
 import net.wastu.memoize.data.NoteState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
+import net.wastu.memoize.data.Note
+import net.wastu.memoize.data.NoteAttachment
+import net.wastu.memoize.data.NoteRepository
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -123,6 +137,10 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
     }
     val notes by graph.repository.collectAsStateWithLifecycle()
     val syncStatus by (graph.connection?.status ?: remember { MutableStateFlow(SyncStatus()) }).collectAsStateWithLifecycle()
+    val syncSettings by (graph.connection?.settings ?: remember { MutableStateFlow(ConnectionSettings()) }).collectAsStateWithLifecycle()
+    var manualRefreshing by remember { mutableStateOf(false) }
+    val isRefreshing = manualRefreshing || syncStatus.busy
+    var previewImage by remember { mutableStateOf<NoteAttachment?>(null) }
     val request by requests.collectAsStateWithLifecycle()
     var consumedRequest by rememberSaveable { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
@@ -395,20 +413,62 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                 },
             ) { padding ->
                 if (searchState.currentValue == SearchBarValue.Collapsed)
-                    NotesList(results, filter, listState, padding, open, clearSearch, resetFilters, chips,
+                    NotesList(
+                        results, filter, listState, padding, open, clearSearch, resetFilters, chips,
                         preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns },
                         selection = selection.toSet(), selecting = selecting, enabled = !batchBusy, onSelect = ::beginSelection,
-                        prefix = { if (syncStatus.needsAuthentication && !selecting) TextButton(onClick = reconnect) { Text("Reconnect") } })
+                        prefix = { if (syncStatus.needsAuthentication && !selecting) TextButton(onClick = reconnect) { Text("Reconnect") } },
+                        repository = notes,
+                        server = syncSettings.server,
+                        onImageClick = { previewImage = it },
+                        onFileClick = { file ->
+                            scope.launch {
+                                try { requireNotNull(graph.attachments) { "Attachments are unavailable" }.open(context, notes, file) }
+                                catch (e: Exception) { snackbar.showSnackbar(e.message ?: "Unable to open file") }
+                            }
+                        },
+                        onTagClick = { tag = it },
+                        onTogglePin = { noteToPin -> scope.launch { notes.setPinned(noteToPin.id, !noteToPin.pinned) } },
+                        isRefreshing = isRefreshing,
+                        onRefresh = {
+                            scope.launch {
+                                manualRefreshing = true
+                                try { graph.connection?.sync(force = true) } finally { manualRefreshing = false }
+                            }
+                        }
+                    )
             }
+            MediaLightboxDialog(
+                attachment = previewImage,
+                repository = notes,
+                server = syncSettings.server,
+                onDismiss = { previewImage = null }
+            )
             }
             ExpandedFullScreenSearchBar(searchState, inputField = input) {
-                NotesList(results, filter, searchListState, PaddingValues(), open, clearSearch, resetFilters, chips,
+                NotesList(
+                    results, filter, searchListState, PaddingValues(), open, clearSearch, resetFilters, chips,
                     preferredColumns, updateColumns, { maximum, columns -> gridCapacity = maximum; displayedColumns = columns },
-                    selection = selection.toSet(), selecting = selecting, enabled = !batchBusy, onSelect = ::beginSelection, prefix = {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
-                        if (syncStatus.needsAuthentication && !selecting) TextButton(onClick = reconnect) { Text("Reconnect") }
-                    }
-                })
+                    selection = selection.toSet(), selecting = selecting, enabled = !batchBusy, onSelect = ::beginSelection,
+                    prefix = {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.End) {
+                            if (syncStatus.needsAuthentication && !selecting) TextButton(onClick = reconnect) { Text("Reconnect") }
+                        }
+                    },
+                    repository = notes,
+                    server = syncSettings.server,
+                    onImageClick = { previewImage = it },
+                    onFileClick = { file ->
+                        scope.launch {
+                            try { requireNotNull(graph.attachments) { "Attachments are unavailable" }.open(context, notes, file) }
+                            catch (e: Exception) { snackbar.showSnackbar(e.message ?: "Unable to open file") }
+                        }
+                    },
+                    onTagClick = { tag = it; scope.launch { searchState.animateToCollapsed() } },
+                    onTogglePin = { noteToPin -> scope.launch { notes.setPinned(noteToPin.id, !noteToPin.pinned) } },
+                    isRefreshing = false,
+                    onRefresh = {}
+                )
             }
         }
     }
@@ -439,97 +499,258 @@ private fun CompactFilterChip(label: String, removeDescription: String, onClear:
 }
 
 @Composable
-private fun NotesList(results: List<NoteResult>, filter: NoteFilter, listState: LazyStaggeredGridState,
-    padding: PaddingValues, onOpen: (NoteResult) -> Unit, onClearSearch: () -> Unit, onResetFilters: () -> Unit,
-    chips: @Composable () -> Unit, preferredColumns: Int, onColumnsChange: (Int) -> Unit,
-    onLayout: (Int, Int) -> Unit, selection: Set<String>, selecting: Boolean, enabled: Boolean,
-    onSelect: (NoteResult) -> Unit, prefix: (@Composable () -> Unit)? = null) {
+private fun NotesList(
+    results: List<NoteResult>,
+    filter: NoteFilter,
+    listState: LazyStaggeredGridState,
+    padding: PaddingValues,
+    onOpen: (NoteResult) -> Unit,
+    onClearSearch: () -> Unit,
+    onResetFilters: () -> Unit,
+    chips: @Composable () -> Unit,
+    preferredColumns: Int,
+    onColumnsChange: (Int) -> Unit,
+    onLayout: (Int, Int) -> Unit,
+    selection: Set<String>,
+    selecting: Boolean,
+    enabled: Boolean,
+    onSelect: (NoteResult) -> Unit,
+    prefix: (@Composable () -> Unit)? = null,
+    repository: NoteRepository,
+    server: String?,
+    onImageClick: (NoteAttachment) -> Unit,
+    onFileClick: (NoteAttachment) -> Unit,
+    onTagClick: (String) -> Unit,
+    onTogglePin: (net.wastu.memoize.data.NotePreview) -> Unit,
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
+) {
     val query = filter.query
     val filtered = filter.tag != null || filter.attachments != AttachmentFilter.ANY || filter.state != NoteState.NORMAL
-    if (results.isEmpty()) {
-        BoxWithConstraints(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-            val fontScale = LocalDensity.current.fontScale
-            SideEffect { onLayout(noteGridCapacity(maxWidth.value, fontScale), noteGridColumns(preferredColumns, maxWidth.value, fontScale)) }
-            // A body action cannot fit below 48 dp; the search field still owns Clear search.
-            val compactSearch = query.isNotEmpty() && maxHeight < 48.dp
-            Column(Modifier.fillMaxSize().testTag("notes-empty").semantics { testTagsAsResourceId = true }
-                .verticalScroll(rememberScrollState())) {
-                if (compactSearch) {
-                    Text("No matches", Modifier.fillMaxWidth().padding(horizontal = 32.dp),
-                        style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                } else {
-                    prefix?.invoke()
-                    chips()
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp).padding(bottom = 88.dp),
-                        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                        androidx.compose.material3.Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                            Box(Modifier.padding(20.dp)) { AppIcon(if (query.isNotEmpty()) R.drawable.ic_search else R.drawable.ic_file) }
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = Modifier.fillMaxSize()
+    ) {
+        if (results.isEmpty()) {
+            BoxWithConstraints(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+                val fontScale = LocalDensity.current.fontScale
+                SideEffect { onLayout(noteGridCapacity(maxWidth.value, fontScale), noteGridColumns(preferredColumns, maxWidth.value, fontScale)) }
+                val compactSearch = query.isNotEmpty() && maxHeight < 48.dp
+                Column(Modifier.fillMaxSize().testTag("notes-empty").semantics { testTagsAsResourceId = true }
+                    .verticalScroll(rememberScrollState())) {
+                    if (compactSearch) {
+                        Text("No matches", Modifier.fillMaxWidth().padding(horizontal = 32.dp),
+                            style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else {
+                        prefix?.invoke()
+                        chips()
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp).padding(bottom = 88.dp),
+                            verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                                Box(Modifier.padding(20.dp)) { AppIcon(if (query.isNotEmpty()) R.drawable.ic_search else R.drawable.ic_file) }
+                            }
+                            Text(when { query.isNotEmpty() -> "No matching notes"; filtered -> "No notes match these filters"; else -> "No notes yet" },
+                                modifier = Modifier.padding(top = 20.dp), style = MaterialTheme.typography.headlineSmall)
+                            Text(when { query.isNotEmpty() -> "Try a different phrase."; filtered -> "Change or clear your filters."; else -> "Start with New note." },
+                                Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (query.isNotEmpty()) TextButton(onClick = onClearSearch) { Text("Clear search") }
+                            else if (filtered) TextButton(onClick = onResetFilters) { Text("Reset filters") }
                         }
-                        Text(when { query.isNotEmpty() -> "No matching notes"; filtered -> "No notes match these filters"; else -> "No notes yet" },
-                            modifier = Modifier.padding(top = 20.dp), style = MaterialTheme.typography.headlineSmall)
-                        Text(when { query.isNotEmpty() -> "Try a different phrase."; filtered -> "Change or clear your filters."; else -> "Start with New note." },
-                            Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (query.isNotEmpty()) TextButton(onClick = onClearSearch) { Text("Clear search") }
-                        else if (filtered) TextButton(onClick = onResetFilters) { Text("Reset filters") }
                     }
                 }
             }
+            return@PullToRefreshBox
         }
-        return
-    }
-    val direction = LocalLayoutDirection.current
-    val fontScale = LocalDensity.current.fontScale
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val width = maxWidth.value - padding.calculateLeftPadding(direction).value - padding.calculateRightPadding(direction).value
-        val maximum = noteGridCapacity(width, fontScale)
-        val columns = noteGridColumns(preferredColumns, width, fontScale)
-        SideEffect { onLayout(maximum, columns) }
-        LazyVerticalStaggeredGrid(columns = StaggeredGridCells.Fixed(columns),
-            modifier = Modifier.fillMaxSize().testTag("notes-grid").noteGridPinch(columns, maximum, onColumnsChange)
-                .semantics { testTagsAsResourceId = true; stateDescription = "$columns columns, maximum $maximum" }.consumeWindowInsets(padding),
-            state = listState, horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalItemSpacing = 12.dp, contentPadding = PaddingValues(
-                start = padding.calculateLeftPadding(direction) + 16.dp, end = padding.calculateRightPadding(direction) + 16.dp,
-                top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 104.dp)) {
-            prefix?.let { action -> item(key = "notes-actions", span = StaggeredGridItemSpan.FullLine) { action() } }
-            if (filtered) item(key = "active-filters", span = StaggeredGridItemSpan.FullLine) { chips() }
-            if (query.isNotEmpty() || filtered) item(key = "notes-context", span = StaggeredGridItemSpan.FullLine) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(when { query.isNotEmpty() -> "Search results"; filter.state == NoteState.ARCHIVED -> "Archived notes"; else -> "Filtered notes" },
-                        Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(results.size.toString(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        val direction = LocalLayoutDirection.current
+        val fontScale = LocalDensity.current.fontScale
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val width = maxWidth.value - padding.calculateLeftPadding(direction).value - padding.calculateRightPadding(direction).value
+            val maximum = noteGridCapacity(width, fontScale)
+            val columns = noteGridColumns(preferredColumns, width, fontScale)
+            SideEffect { onLayout(maximum, columns) }
+            LazyVerticalStaggeredGrid(
+                columns = StaggeredGridCells.Fixed(columns),
+                modifier = Modifier.fillMaxSize().testTag("notes-grid").noteGridPinch(columns, maximum, onColumnsChange)
+                    .semantics { testTagsAsResourceId = true; stateDescription = "$columns columns, maximum $maximum" }.consumeWindowInsets(padding),
+                state = listState,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalItemSpacing = 12.dp,
+                contentPadding = PaddingValues(
+                    start = padding.calculateLeftPadding(direction) + 16.dp, end = padding.calculateRightPadding(direction) + 16.dp,
+                    top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 104.dp
+                )
+            ) {
+                prefix?.let { action -> item(key = "notes-actions", span = StaggeredGridItemSpan.FullLine) { action() } }
+                if (filtered) item(key = "active-filters", span = StaggeredGridItemSpan.FullLine) { chips() }
+                if (query.isNotEmpty() || filtered) item(key = "notes-context", span = StaggeredGridItemSpan.FullLine) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(when { query.isNotEmpty() -> "Search results"; filter.state == NoteState.ARCHIVED -> "Archived notes"; else -> "Filtered notes" },
+                            Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(results.size.toString(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-            }
-            items(results, key = { result -> "note:${result.note.id}" }) { result ->
-                val note = result.note
-                val checked = note.id in selection
-                OutlinedCard(shape = MaterialTheme.shapes.medium,
-                    colors = CardDefaults.outlinedCardColors(containerColor = if (checked) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(if (checked) 2.dp else 1.dp, if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
-                    modifier = Modifier.fillMaxWidth().testTag("note-${note.id}")
-                        .combinedClickable(enabled = enabled, role = Role.Button, onClick = { onOpen(result) },
-                            onLongClickLabel = "Select note", onLongClick = { onSelect(result) })
-                        .semantics { selected = checked; if (selecting) stateDescription = if (checked) "Selected" else "Not selected" }
-                        .semantics { if (query.isNotEmpty()) contentDescription = "${note.title}, ${result.matches.size} matches for $query" }) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.Top) {
-                            Box(Modifier.weight(1f).clipToBounds()) {
-                                MarkdownPreviewText(note.title, LiteralSearch.ranges(note.title, query), style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface, maxLines = 3,
-                                    fullSource = note.content, sourceOffset = note.content.indexOf(note.title).coerceAtLeast(0))
+                items(results, key = { result -> "note:${result.note.id}" }) { result ->
+                    val note = result.note
+                    val checked = note.id in selection
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (checked) MaterialTheme.colorScheme.secondaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainerLow
+                        ),
+                        border = BorderStroke(
+                            if (checked) 2.dp else 1.dp,
+                            if (checked) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.fillMaxWidth().testTag("note-${note.id}")
+                            .combinedClickable(
+                                enabled = enabled,
+                                role = Role.Button,
+                                onClick = { onOpen(result) },
+                                onLongClickLabel = "Select note",
+                                onLongClick = { onSelect(result) }
+                            )
+                            .semantics {
+                                selected = checked
+                                if (selecting) stateDescription = if (checked) "Selected" else "Not selected"
                             }
-                            if (selecting) Checkbox(checked = checked, onCheckedChange = null,
-                                modifier = Modifier.size(24.dp).clearAndSetSemantics {})
-                        }
-                        if (result.excerpt.isNotBlank()) MarkdownPreviewText(result.excerpt, result.excerptMatches,
-                            style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 6, fullSource = note.content, sourceOffset = result.excerptOffset)
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(timestamp(note.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (note.attachments.isNotEmpty()) Text("${note.attachments.size} ${if (note.attachments.size == 1) "attachment" else "attachments"}",
-                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (note.error != null) Text("Needs attention", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                            .semantics {
+                                if (query.isNotEmpty()) contentDescription = "${note.title}, ${result.matches.size} matches for $query"
+                            }
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                                Column(Modifier.weight(1f)) {
+                                    if (note.pinned) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(bottom = 4.dp)
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_pin),
+                                                contentDescription = "Pinned",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(
+                                                "Pinned",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                    Box(Modifier.fillMaxWidth().clipToBounds()) {
+                                        MarkdownPreviewText(
+                                            note.title,
+                                            LiteralSearch.ranges(note.title, query),
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 3,
+                                            fullSource = note.content,
+                                            sourceOffset = note.content.indexOf(note.title).coerceAtLeast(0)
+                                        )
+                                    }
+                                }
+                                if (selecting) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = null,
+                                        modifier = Modifier.size(24.dp).clearAndSetSemantics {}
+                                    )
+                                }
+                            }
+
+                            if (result.excerpt.isNotBlank() && result.excerpt != note.title) {
+                                MarkdownPreviewText(
+                                    result.excerpt,
+                                    result.excerptMatches,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 6,
+                                    fullSource = note.content,
+                                    sourceOffset = result.excerptOffset
+                                )
+                            }
+
+                            if (note.attachments.isNotEmpty()) {
+                                NoteMediaGrid(
+                                    attachments = note.attachments,
+                                    repository = repository,
+                                    server = server,
+                                    onImageClick = onImageClick,
+                                    onFileClick = onFileClick
+                                )
+                            }
+
+                            if (note.tags.isNotEmpty()) {
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    for (t in note.tags) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                                            modifier = Modifier.clickable { onTagClick(t) }
+                                        ) {
+                                            Text(
+                                                text = "#$t",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        timestamp(note.createdAt),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (note.error != null) {
+                                        Text(
+                                            "Needs attention",
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                }
+                                if (!selecting) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .clickable { onTogglePin(note) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_pin),
+                                            contentDescription = if (note.pinned) "Unpin note" else "Pin note",
+                                            tint = if (note.pinned) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

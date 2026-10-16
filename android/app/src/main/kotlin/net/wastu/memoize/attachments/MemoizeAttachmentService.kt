@@ -72,8 +72,8 @@ class MemoizeAttachmentService(
                         count
                     }
                 }
-                if (expectedSize != null && size != expectedSize) {
-                    throw IOException("The selected file changed or ended before copying finished. Select it again.")
+                if (expectedSize != null && size < expectedSize) {
+                    throw IOException("The selected file ended before copying finished. Select it again.")
                 }
                 currentCoroutineContext().ensureActive()
                 Files.move(temporary.toPath(), original.toPath(), StandardCopyOption.ATOMIC_MOVE)

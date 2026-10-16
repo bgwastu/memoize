@@ -19,6 +19,7 @@ internal object SnapshotCodec {
         put("updatedAt", value.updatedAt)
         put("state", value.state.name)
         put("visibility", value.visibility.name)
+        put("pinned", value.pinned)
         put("attachments", JSONArray(attachments(value.attachments)))
     }.toString()
     fun snapshot(json: String): MemoSnapshot = JSONObject(json).let {
@@ -26,6 +27,7 @@ internal object SnapshotCodec {
             nullable(it, "remoteName"), it.getString("content"), it.getLong("createdAt"),
             it.getLong("updatedAt"), NoteState.valueOf(it.getString("state")),
             NoteVisibility.valueOf(it.getString("visibility")), attachments(it.getJSONArray("attachments").toString()),
+            pinned = it.optBoolean("pinned", false),
         )
     }
     private fun attachment(value: NoteAttachment): JSONObject = JSONObject().apply {

@@ -103,6 +103,9 @@ class MemosClient(
         if (base != null && base.visibility != snapshot.visibility) {
             body.put("visibility", snapshot.visibility.name); mask += "visibility"
         }
+        if (base != null && base.pinned != snapshot.pinned) {
+            body.put("pinned", snapshot.pinned); mask += "pinned"
+        }
         // Omitting updateTime while including the mask requests the server's timestamp.
         return memo(json(requireNotNull(snapshot.remoteName), "PATCH", mapOf("updateMask" to mask.joinToString(",")), body))
     }
@@ -114,16 +117,19 @@ class MemosClient(
 
     override suspend fun upload(attachment: NoteAttachment, file: File): NoteAttachment {
         require(file.isFile) { "The original file is unavailable." }
-        getAttachment(attachment.id)?.let { existing ->
-            if (existing.filename != attachment.filename || existing.mimeType != attachment.mimeType || existing.size != file.length()) {
-                throw IOException("A different server file already has this attachment identity. The local original is preserved.")
+        if (attachment.remoteName != null) {
+            getAttachment(attachment.id)?.let { existing ->
+                if (existing.filename != attachment.filename || existing.mimeType != attachment.mimeType || existing.size != file.length()) {
+                    throw IOException("A different server file already has this attachment identity. The local original is preserved.")
+                }
+                return existing.copy(localPath = attachment.localPath)
             }
-            return existing.copy(localPath = attachment.localPath)
         }
         val size = file.length()
-        val opening = JSONObject().put("spec", JSONObject()
+        val spec = JSONObject()
             .put("attachment", JSONObject().put("filename", attachment.filename).put("type", attachment.mimeType))
-            .put("attachmentId", resourceId(attachment.id, "attachments")).put("totalSize", size.toString()))
+            .put("totalSize", size.toString())
+        val opening = JSONObject().put("spec", spec)
         if (size == 0L) opening.put("finishWrite", true)
         var response = json("attachments:upload", "POST", body = opening)
         response.optJSONObject("attachment")?.let { return attachment(it).copy(localPath = attachment.localPath) }
@@ -150,8 +156,9 @@ class MemosClient(
     }
 
     override suspend fun download(attachment: NoteAttachment, destination: File) = withContext<Unit>(Dispatchers.IO) {
+        val uid = resourceId(attachment.remoteName ?: attachment.id, "attachments")
         val uri = attachment.externalLink?.takeIf { it.isNotBlank() }?.let(URI::create)
-            ?: endpoint("file/attachments/${resourceId(attachment.remoteName ?: attachment.id, "attachments")}", emptyMap(), false)
+            ?: endpoint("file/attachments/$uid/${encode(attachment.filename)}", emptyMap(), false)
         validateDownload(uri)
         destination.parentFile?.mkdirs()
         val temporary = File.createTempFile(".download-", ".partial", destination.parentFile)
@@ -181,6 +188,7 @@ class MemosClient(
     }
 
     private fun memoBody(snapshot: MemoSnapshot): JSONObject = JSONObject().put("content", snapshot.content)
+        .put("pinned", snapshot.pinned)
         .put("attachments", JSONArray(snapshot.attachments.map {
             JSONObject().put("name", "attachments/${resourceId(it.remoteName ?: it.id, "attachments")}")
         }))
@@ -194,6 +202,7 @@ class MemosClient(
             NoteState.valueOf(value.optString("state", "NORMAL")),
             NoteVisibility.valueOf(value.optString("visibility", "PRIVATE")),
             (0 until files.length()).map { attachment(files.getJSONObject(it)) },
+            pinned = value.optBoolean("pinned", false),
         )
     }
 

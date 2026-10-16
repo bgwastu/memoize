@@ -21,6 +21,7 @@ interface ConnectionService {
     val status: StateFlow<SyncStatus>
     suspend fun connect(server: String, token: String)
     suspend fun retry()
+    suspend fun sync(force: Boolean = true): Boolean
 }
 
 interface AttachmentService {

@@ -49,9 +49,11 @@ data class MemoSnapshot(
     val state: NoteState = NoteState.NORMAL,
     val visibility: NoteVisibility = NoteVisibility.PRIVATE,
     val attachments: List<NoteAttachment> = emptyList(),
+    val pinned: Boolean = false,
 ) {
     fun sameBody(other: MemoSnapshot): Boolean =
         content == other.content && state == other.state && visibility == other.visibility &&
+            pinned == other.pinned &&
             attachments.map { it.id }.toSet() == other.attachments.map { it.id }.toSet()
 }
 
@@ -77,6 +79,7 @@ data class Note(
     val attachments: List<NoteAttachment>,
     val tags: List<String>,
     val problem: NoteProblem? = null,
+    val pinned: Boolean = false,
 ) {
     val hasConflict: Boolean get() = problem == NoteProblem.CONFLICT
     val isDirty: Boolean get() = revision > syncedRevision || deleteAfter != null
@@ -84,7 +87,7 @@ data class Note(
     val title: String get() = content.lineSequence().firstOrNull { it.isNotBlank() }
         ?.trim()?.take(120) ?: "New note"
     fun snapshot(): MemoSnapshot = MemoSnapshot(
-        remoteName, content, createdAt, updatedAt, state, visibility, attachments,
+        remoteName, content, createdAt, updatedAt, state, visibility, attachments, pinned,
     )
 }
 
@@ -101,6 +104,7 @@ data class NotePreview(
     val attachments: List<NoteAttachment>,
     val tags: List<String>,
     val problem: NoteProblem? = null,
+    val pinned: Boolean = false,
 ) {
     val hasConflict: Boolean get() = problem == NoteProblem.CONFLICT
     val isBlankDraft: Boolean get() = remoteName == null && content.isBlank() && attachments.isEmpty()

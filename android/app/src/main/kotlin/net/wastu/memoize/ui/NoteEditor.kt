@@ -38,6 +38,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import kotlinx.coroutines.flow.MutableStateFlow
+import net.wastu.memoize.data.NoteAttachment
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -257,27 +259,103 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
         if (display.input === state.text && display.query == query) state.style(display, palette)
     }
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), topBar = {
-        TopAppBar(title = {},
-            navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", !leaving, close) }, actions = {
-            IconAction(R.drawable.ic_more, "Note options") { menu = true }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(if (note.state == NoteState.NORMAL) "Archive" else "Unarchive") }, onClick = {
-                    menu = false
-                    leaving = true
+        TopAppBar(
+            title = {
+                Column {
+                    Text(
+                        text = if (saveStatus.saving) "Saving…" else "Saved",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (saveStatus.saving) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = timestamp(note.updatedAt),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", !leaving, close) },
+            actions = {
+                IconAction(
+                    R.drawable.ic_pin,
+                    if (note.pinned) "Unpin note" else "Pin note",
+                    enabled = !leaving
+                ) {
                     scope.launch {
                         try {
                             val saved = session.flush(snapshot(), state.characterEpoch)
-                            notes.setState(saved.id, if (note.state == NoteState.NORMAL) NoteState.ARCHIVED else NoteState.NORMAL)
-                            finalized = true
-                            leave()
-                        } catch (exception: Exception) {
-                            if (exception is kotlinx.coroutines.CancellationException) throw exception
-                            snackbar.showSnackbar(exception.message ?: "Unable to change note state")
-                        } finally { leaving = false }
+                            notes.setPinned(saved.id, !saved.pinned)
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            snackbar.showSnackbar(e.message ?: "Unable to update pin status")
+                        }
                     }
-                })
-                DropdownMenuItem(text = { Text("Recovery versions") }, onClick = { menu = false; history = true })
-                DropdownMenuItem(text = { Text("Delete") }, onClick = {
+                }
+                IconAction(R.drawable.ic_more, "Note options") { menu = true }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (note.pinned) "Unpin note" else "Pin to top") },
+                        leadingIcon = { AppIcon(R.drawable.ic_pin) },
+                        onClick = {
+                            menu = false
+                            scope.launch {
+                                try {
+                                    val saved = session.flush(snapshot(), state.characterEpoch)
+                                    notes.setPinned(saved.id, !saved.pinned)
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    snackbar.showSnackbar(e.message ?: "Unable to update pin")
+                                }
+                            }
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(when (note.visibility) {
+                                net.wastu.memoize.data.NoteVisibility.PRIVATE -> "Visibility: Private"
+                                net.wastu.memoize.data.NoteVisibility.PROTECTED -> "Visibility: Protected"
+                                net.wastu.memoize.data.NoteVisibility.PUBLIC -> "Visibility: Public"
+                            })
+                        },
+                        onClick = {
+                            menu = false
+                            val next = when (note.visibility) {
+                                net.wastu.memoize.data.NoteVisibility.PRIVATE -> net.wastu.memoize.data.NoteVisibility.PROTECTED
+                                net.wastu.memoize.data.NoteVisibility.PROTECTED -> net.wastu.memoize.data.NoteVisibility.PUBLIC
+                                net.wastu.memoize.data.NoteVisibility.PUBLIC -> net.wastu.memoize.data.NoteVisibility.PRIVATE
+                            }
+                            scope.launch {
+                                try {
+                                    val saved = session.flush(snapshot(), state.characterEpoch)
+                                    notes.setVisibility(saved.id, next)
+                                    snackbar.showSnackbar("Visibility set to ${next.name.lowercase().replaceFirstChar { it.uppercase() }}")
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    snackbar.showSnackbar(e.message ?: "Unable to update visibility")
+                                }
+                            }
+                        }
+                    )
+                    DropdownMenuItem(text = { Text(if (note.state == NoteState.NORMAL) "Archive" else "Unarchive") },
+                        leadingIcon = { AppIcon(R.drawable.ic_archive) }, onClick = {
+                        menu = false
+                        leaving = true
+                        scope.launch {
+                            try {
+                                val saved = session.flush(snapshot(), state.characterEpoch)
+                                notes.setState(saved.id, if (note.state == NoteState.NORMAL) NoteState.ARCHIVED else NoteState.NORMAL)
+                                finalized = true
+                                leave()
+                            } catch (exception: Exception) {
+                                if (exception is kotlinx.coroutines.CancellationException) throw exception
+                                snackbar.showSnackbar(exception.message ?: "Unable to change note state")
+                            } finally { leaving = false }
+                        }
+                    })
+                    DropdownMenuItem(text = { Text("Recovery versions") },
+                        leadingIcon = { AppIcon(R.drawable.ic_history) }, onClick = { menu = false; history = true })
+                    DropdownMenuItem(text = { Text("Delete") },
+                        leadingIcon = { AppIcon(R.drawable.ic_close) }, onClick = {
                     menu = false
                     leaving = true
                     graph.scope.launch {
@@ -300,47 +378,56 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
         Column(Modifier.widthIn(max = 760.dp).fillMaxSize()) {
             NativeSourceField(state, enabled = !leaving,
                 modifier = Modifier.weight(1f).fillMaxWidth())
-            if (note.attachments.isNotEmpty()) LazyColumn(Modifier.fillMaxWidth().heightIn(max = 144.dp)) {
-                items(note.attachments, key = { it.id }) { attachment ->
-                    Row(Modifier.fillMaxWidth().padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(enabled = !attachments.busy, onClick = {
-                            attachments.start(graph.scope, "Opening ${attachment.filename}…", { exception ->
-                                snackbar.showSnackbar(exception.message ?: "Unable to open this file. Try again.")
-                            }) {
-                                requireNotNull(graph.attachments) { "Attachments are unavailable" }.open(context, notes, attachment)
-                            }
-                        }, modifier = Modifier.weight(1f).semantics { contentDescription = "Open ${attachment.filename}" }) {
-                            AppIcon(if (attachment.isImage) R.drawable.ic_image else R.drawable.ic_file)
-                            Text(attachment.filename, Modifier.padding(start = 8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            var previewImage by remember { mutableStateOf<NoteAttachment?>(null) }
+            val serverConfig by (graph.connection?.settings ?: remember { MutableStateFlow(ConnectionSettings()) }).collectAsStateWithLifecycle()
+            EditorAttachmentStrip(
+                attachments = note.attachments,
+                repository = notes,
+                server = serverConfig.server,
+                busy = attachments.busy,
+                onOpen = { attachment ->
+                    if (attachment.isImage) {
+                        previewImage = attachment
+                    } else {
+                        attachments.start(graph.scope, "Opening ${attachment.filename}…", { exception ->
+                            snackbar.showSnackbar(exception.message ?: "Unable to open this file. Try again.")
+                        }) {
+                            requireNotNull(graph.attachments) { "Attachments are unavailable" }.open(context, notes, attachment)
                         }
-                        IconAction(R.drawable.ic_close, "Remove ${attachment.filename}", !attachments.busy) {
-                            attachments.start(graph.scope, "Removing file…", { exception ->
-                                snackbar.showSnackbar(exception.message ?: "Unable to remove this file. Try again.")
-                            }) {
-                                val saved = session.flush(snapshot(), state.characterEpoch)
-                                val current = saved.attachments.firstOrNull { it.id == attachment.id }
-                                    ?: saved.attachments.firstOrNull {
-                                        it.filename == attachment.filename && it.mimeType == attachment.mimeType && it.size == attachment.size &&
-                                            ((attachment.localPath != null && it.localPath == attachment.localPath) ||
-                                                (attachment.remoteName != null && it.remoteName == attachment.remoteName))
-                                    }
-                                    ?: error("This file is no longer attached to the note.")
-                                notes.removeAttachment(saved.id, current.id)
-                                val deadline = notes.attachmentCleanup().firstOrNull { it.noteId == saved.id && it.attachment.id == current.id }?.deleteAfter
-                                graph.scope.launch {
-                                    try {
-                                        if (deadline == null) snackbar.showSnackbar("Attachment removed. Recovery versions are available in Settings.")
-                                        else showUndoUntil(snackbar, "Attachment removed", deadline,
-                                            onUndo = { notes.undoRemoveAttachment(saved.id, current.id) },
-                                            expiredMessage = "Undo expired. The file remains available in Recovery versions.")
-                                    } catch (error: CancellationException) { throw error }
-                                    catch (_: Exception) { snackbar.showSnackbar("Unable to restore this file. Its original remains available in Recovery versions.") }
-                                }
+                    }
+                },
+                onRemove = { attachment ->
+                    attachments.start(graph.scope, "Removing file…", { exception ->
+                        snackbar.showSnackbar(exception.message ?: "Unable to remove this file. Try again.")
+                    }) {
+                        val saved = session.flush(snapshot(), state.characterEpoch)
+                        val current = saved.attachments.firstOrNull { it.id == attachment.id }
+                            ?: saved.attachments.firstOrNull {
+                                it.filename == attachment.filename && it.mimeType == attachment.mimeType && it.size == attachment.size &&
+                                    ((attachment.localPath != null && it.localPath == attachment.localPath) ||
+                                        (attachment.remoteName != null && it.remoteName == attachment.remoteName))
                             }
+                            ?: error("This file is no longer attached to the note.")
+                        notes.removeAttachment(saved.id, current.id)
+                        val deadline = notes.attachmentCleanup().firstOrNull { it.noteId == saved.id && it.attachment.id == current.id }?.deleteAfter
+                        graph.scope.launch {
+                            try {
+                                if (deadline == null) snackbar.showSnackbar("Attachment removed. Recovery versions are available in Settings.")
+                                else showUndoUntil(snackbar, "Attachment removed", deadline,
+                                    onUndo = { notes.undoRemoveAttachment(saved.id, current.id) },
+                                    expiredMessage = "Undo expired. The file remains available in Recovery versions.")
+                            } catch (error: CancellationException) { throw error }
+                            catch (_: Exception) { snackbar.showSnackbar("Unable to restore this file. Its original remains available in Recovery versions.") }
                         }
                     }
                 }
-            }
+            )
+            MediaLightboxDialog(
+                attachment = previewImage,
+                repository = notes,
+                server = serverConfig.server,
+                onDismiss = { previewImage = null }
+            )
             saveStatus.error?.let { message ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).semantics { liveRegion = LiveRegionMode.Polite }, verticalAlignment = Alignment.CenterVertically) {
                     Text(message, Modifier.weight(1f), color = colors.error)

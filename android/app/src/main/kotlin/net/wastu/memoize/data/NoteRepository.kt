@@ -69,7 +69,7 @@ class NoteRepository private constructor(
         val query = LiteralSearch.prepare(filter.query)
         val indexQuery = query.indexExpression
         val rows = if (indexQuery == null) dao.previews(account, filter.state.name) else dao.queryPreviews(RoomRawQuery(
-            "SELECT notes.account, notes.id, notes.content, notes.searchContent, notes.createdAt, notes.updatedAt, notes.state, notes.remoteName, notes.error, notes.attachmentsJson, notes.tagsJson, notes.problemCode FROM notes JOIN note_search ON notes.rowid = note_search.rowid WHERE notes.account = ? AND notes.deleteAfter IS NULL AND notes.state = ? AND note_search MATCH ? ORDER BY notes.createdAt DESC, notes.id ASC",
+            "SELECT notes.account, notes.id, notes.content, notes.searchContent, notes.createdAt, notes.updatedAt, notes.state, notes.remoteName, notes.error, notes.attachmentsJson, notes.tagsJson, notes.problemCode, notes.pinned FROM notes JOIN note_search ON notes.rowid = note_search.rowid WHERE notes.account = ? AND notes.deleteAfter IS NULL AND notes.state = ? AND note_search MATCH ? ORDER BY notes.pinned DESC, notes.createdAt DESC, notes.id ASC",
         ) { statement -> statement.bindText(1, account); statement.bindText(2, filter.state.name); statement.bindText(3, indexQuery) })
         val results = rows.asSequence().onEach { queryContext.ensureActive() }
             .map { entity -> entity to entity.preview() }
@@ -83,10 +83,11 @@ class NoteRepository private constructor(
             .map { (entity, note) -> LiteralSearch.result(note, query, entity.searchContent) }
             .filter { filter.query.isEmpty() || it.matches.isNotEmpty() }
             .toList()
+        val comparator = compareByDescending<NoteResult> { it.note.pinned }
         when (filter.sort) {
-            NoteSort.NEWEST -> results
-            NoteSort.OLDEST -> results.sortedWith(compareBy<NoteResult> { it.note.createdAt }.thenBy { it.note.id })
-            NoteSort.UPDATED -> results.sortedWith(compareByDescending<NoteResult> { it.note.updatedAt }
+            NoteSort.NEWEST -> results.sortedWith(comparator.thenByDescending { it.note.createdAt }.thenBy { it.note.id })
+            NoteSort.OLDEST -> results.sortedWith(comparator.thenBy { it.note.createdAt }.thenBy { it.note.id })
+            NoteSort.UPDATED -> results.sortedWith(comparator.thenByDescending { it.note.updatedAt }
                 .thenByDescending { it.note.createdAt }.thenBy { it.note.id })
         }
     }
@@ -131,6 +132,20 @@ class NoteRepository private constructor(
     suspend fun setState(id: String, state: NoteState): Note = transaction {
         val current = requireNote(id)
         val saved = current.copy(state = state.name, revision = current.revision + 1, updatedAt = clock(), error = null)
+        dao.put(saved); queue(saved); saved.note()
+    }
+
+    suspend fun setPinned(id: String, pinned: Boolean): Note = transaction {
+        val current = requireNote(id)
+        if (current.pinned == pinned) return@transaction current.note()
+        val saved = current.copy(pinned = pinned, revision = current.revision + 1, updatedAt = clock())
+        dao.put(saved); queue(saved); saved.note()
+    }
+
+    suspend fun setVisibility(id: String, visibility: NoteVisibility): Note = transaction {
+        val current = requireNote(id)
+        if (current.visibility == visibility.name) return@transaction current.note()
+        val saved = current.copy(visibility = visibility.name, revision = current.revision + 1, updatedAt = clock())
         dao.put(saved); queue(saved); saved.note()
     }
 
@@ -310,6 +325,7 @@ class NoteRepository private constructor(
             selectionStart = current?.selectionStart?.coerceAtMost(remote.content.length) ?: 0,
             selectionEnd = current?.selectionEnd?.coerceAtMost(remote.content.length) ?: 0,
             scroll = current?.scroll ?: 0,
+            pinned = remote.pinned,
         )
         dao.put(saved); saved.note()
     }
@@ -391,12 +407,24 @@ class NoteRepository private constructor(
             updatedAt = clock(), error = null)
         dao.put(saved); queue(saved); saved.note()
     }
-    suspend fun updateAttachment(id: String, attachment: NoteAttachment): Note = transaction {
+    suspend fun updateAttachment(id: String, oldAttachmentId: String, attachment: NoteAttachment): Note = transaction {
         val current = requireNote(id)
-        val values = readAttachments(current.attachmentsJson).map { if (it.id == attachment.id) attachment else it }
+        val values = readAttachments(current.attachmentsJson).map {
+            if (it.id == oldAttachmentId || it.id == attachment.id) attachment else it
+        }
         val saved = current.copy(attachmentsJson = SnapshotCodec.attachments(values))
-        dao.put(saved); saved.note()
+        dao.put(saved)
+        if (oldAttachmentId != attachment.id) {
+            val oldFile = originalAttachmentFile(oldAttachmentId)
+            val newFile = originalAttachmentFile(attachment.id)
+            if (oldFile.isFile && !newFile.exists()) {
+                oldFile.renameTo(newFile)
+            }
+        }
+        saved.note()
     }
+    suspend fun updateAttachment(id: String, attachment: NoteAttachment): Note =
+        updateAttachment(id, attachment.id, attachment)
     /** Preserve downloaded originals in every recovery/removal snapshot before the server can destroy bytes. */
     suspend fun recordAttachmentOriginal(attachmentId: String, path: String) = transaction {
         require(File(path).isFile)
@@ -618,11 +646,11 @@ class NoteRepository private constructor(
         NoteVisibility.valueOf(visibility), remoteName, revision, syncedRevision,
         baseJson?.let(::readSnapshot), sentJson?.let(::readSnapshot), sentRevision,
         deleteAfter, if (hasConflict) CONFLICT_MESSAGE else error, selectionStart, selectionEnd, scroll,
-        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), problem)
+        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), problem, pinned)
 
     private fun NotePreviewRow.preview(): NotePreview = NotePreview(id, account, content, createdAt, updatedAt,
         NoteState.valueOf(state), remoteName, if (problemCode == NoteProblem.CONFLICT.code) CONFLICT_MESSAGE else error,
-        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), NoteProblem.entries.firstOrNull { it.code == problemCode })
+        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), NoteProblem.entries.firstOrNull { it.code == problemCode }, pinned)
 
     override fun close() { database.close() }
 

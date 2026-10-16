@@ -45,6 +45,7 @@ internal data class NoteEntity(
     val attachmentsJson: String = "[]",
     val tagsJson: String = "[]",
     @ColumnInfo(defaultValue = "NULL") val problemCode: String? = null,
+    @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
 )
 
 /** A Room projection keeps list reads independent of potentially large sync snapshots. */
@@ -61,6 +62,7 @@ internal data class NotePreviewRow(
     val attachmentsJson: String,
     val tagsJson: String,
     val problemCode: String?,
+    val pinned: Boolean = false,
 )
 
 @Entity(tableName = "pending_operations", primaryKeys = ["account", "noteId"])
@@ -101,12 +103,12 @@ internal interface NoteDao {
     suspend fun remote(account: String, name: String): NoteEntity?
     @Query("SELECT * FROM notes WHERE account = :account ORDER BY createdAt DESC, id ASC")
     suspend fun all(account: String): List<NoteEntity>
-    @Query("SELECT account, id, content, searchContent, createdAt, updatedAt, state, remoteName, error, attachmentsJson, tagsJson, problemCode FROM notes WHERE account = :account AND deleteAfter IS NULL AND state = :state ORDER BY createdAt DESC, id ASC")
+    @Query("SELECT account, id, content, searchContent, createdAt, updatedAt, state, remoteName, error, attachmentsJson, tagsJson, problemCode, pinned FROM notes WHERE account = :account AND deleteAfter IS NULL AND state = :state ORDER BY pinned DESC, createdAt DESC, id ASC")
     suspend fun previews(account: String, state: String): List<NotePreviewRow>
     @Query("SELECT tagsJson FROM notes WHERE account = :account AND deleteAfter IS NULL")
     suspend fun tagRows(account: String): List<String>
-    @Query("SELECT COUNT(*) FROM notes WHERE account = :account")
-    fun observeChanges(account: String): Flow<Int>
+    @Query("SELECT COALESCE(SUM(revision), 0) + COALESCE(SUM(updatedAt), 0) + COUNT(*) FROM notes WHERE account = :account")
+    fun observeChanges(account: String): Flow<Long>
     @Query("SELECT * FROM notes WHERE account = :account AND id = :id")
     fun observeNote(account: String, id: String): Flow<NoteEntity?>
     @Query("SELECT * FROM notes")
@@ -140,7 +142,7 @@ internal interface NoteDao {
 
 @Database(
     entities = [NoteEntity::class, PendingEntity::class, RecoveryEntity::class, MetadataEntity::class, AttachmentCleanupEntity::class],
-    version = 2, exportSchema = true,
+    version = 3, exportSchema = true,
 )
 internal abstract class NoteDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
@@ -151,16 +153,23 @@ internal abstract class NoteDatabase : RoomDatabase() {
             .setQueryCoroutineContext(Dispatchers.IO)
             .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
             // Intentionally no destructive migration fallback. Upgrade schemas explicitly.
-            .addMigrations(object : Migration(1, 2) {
-                override fun migrate(connection: SQLiteConnection) {
-                    connection.exec("ALTER TABLE notes ADD COLUMN problemCode TEXT DEFAULT NULL")
-                    // Frozen version-1 representation; future UI wording must not change migration.
-                    connection.prepare("UPDATE notes SET problemCode = 'CONFLICT', error = NULL WHERE error = ?").use {
-                        it.bindText(1, "A server edit conflicts with this note. Both versions are preserved. Choose a recovery version to continue.")
-                        it.step()
+            .addMigrations(
+                object : Migration(1, 2) {
+                    override fun migrate(connection: SQLiteConnection) {
+                        connection.exec("ALTER TABLE notes ADD COLUMN problemCode TEXT DEFAULT NULL")
+                        // Frozen version-1 representation; future UI wording must not change migration.
+                        connection.prepare("UPDATE notes SET problemCode = 'CONFLICT', error = NULL WHERE error = ?").use {
+                            it.bindText(1, "A server edit conflicts with this note. Both versions are preserved. Choose a recovery version to continue.")
+                            it.step()
+                        }
+                    }
+                },
+                object : Migration(2, 3) {
+                    override fun migrate(connection: SQLiteConnection) {
+                        connection.exec("ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
                     }
                 }
-            })
+            )
             .addCallback(object : Callback() {
                 override fun onCreate(connection: SQLiteConnection) {
                     connection.exec("CREATE VIRTUAL TABLE note_search USING fts5(searchContent, content='notes', content_rowid='rowid', tokenize='trigram case_sensitive 1')")

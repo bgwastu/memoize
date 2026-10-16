@@ -475,7 +475,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
         }
     }
     if (attachmentChoice) AttachmentChoiceSheet(onDismiss = { attachmentChoice = false },
-        onPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+        onPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
         onFile = { filePicker.launch(arrayOf("*/*")) })
     if (history) RecoveryBrowser(notes, noteId = note.id, onDismiss = { history = false }, onRestore = { recovery ->
         check(state.commandReady) { "Finish the current input before restoring this version." }
@@ -511,10 +511,10 @@ private fun AttachmentChoiceSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, on
             Text("Attach to note", Modifier.padding(bottom = 20.dp), style = MaterialTheme.typography.headlineSmall)
             Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column {
-                    ListItem(headlineContent = { Text("Photo") }, leadingContent = { AppIcon(R.drawable.ic_image) },
+                    ListItem(headlineContent = { Text("Photo or video") }, leadingContent = { AppIcon(R.drawable.ic_image) },
                         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onPhoto) })
-                    ListItem(headlineContent = { Text("File") }, leadingContent = { AppIcon(R.drawable.ic_file) },
+                    ListItem(headlineContent = { Text("Document or file") }, leadingContent = { AppIcon(R.drawable.ic_file) },
                         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onFile) })
                 }

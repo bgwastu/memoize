@@ -58,6 +58,14 @@ fun formatFileSize(bytes: Long): String = when {
     else -> String.format(Locale.US, "%.1f MB", bytes.toDouble() / (1024 * 1024))
 }
 
+fun fileIconRes(filename: String, mimeType: String): Int = when {
+    mimeType.startsWith("video/") -> R.drawable.ic_image
+    mimeType.startsWith("audio/") -> R.drawable.ic_attach
+    mimeType.contains("code") || filename.endsWith(".kt") || filename.endsWith(".json") || filename.endsWith(".ts") || filename.endsWith(".js") -> R.drawable.ic_code
+    mimeType.contains("zip") || mimeType.contains("tar") || mimeType.contains("compressed") -> R.drawable.ic_archive
+    else -> R.drawable.ic_file
+}
+
 fun attachmentImageModel(
     attachment: NoteAttachment,
     repository: NoteRepository,
@@ -320,7 +328,7 @@ fun NoteMediaGrid(
                         },
                         leadingIcon = {
                             Icon(
-                                painter = painterResource(R.drawable.ic_file),
+                                painter = painterResource(fileIconRes(file.filename, file.mimeType)),
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp),
                                 tint = MaterialTheme.colorScheme.primary
@@ -476,7 +484,7 @@ fun EditorAttachmentStrip(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_file),
+                            painter = painterResource(fileIconRes(attachment.filename, attachment.mimeType)),
                             contentDescription = null,
                             modifier = Modifier.size(24.dp),
                             tint = MaterialTheme.colorScheme.primary

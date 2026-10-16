@@ -113,7 +113,7 @@ class MemoizeAttachmentService(
                         val temporary = File.createTempFile(".download-", ".partial", repository.cacheDirectory)
                         try {
                             download(repository, attachment, temporary)
-                            if (!temporary.isFile || temporary.length() != attachment.size) {
+                            if (!temporary.isFile || (attachment.size > 0L && temporary.length() < attachment.size)) {
                                 throw IOException("The file download did not finish. Try opening it again.")
                             }
                             currentCoroutineContext().ensureActive()

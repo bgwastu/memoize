@@ -138,7 +138,7 @@ public final class MemosClient: MemosAPI, Sendable {
         // Bounded chunks keep large files from producing full-size base64 copies.
         struct Upload: Decodable { let uploadId: String?; let maxChunkSize: Int?; let attachment: RemoteAttachment? }
         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        var spec: [String: Any] = ["spec":["attachment":["filename":attachment.filename,"type":attachment.mime],"attachmentId":attachment.id,"totalSize":String(size)]]
+        var spec: [String: Any] = ["spec":["attachment":["filename":attachment.filename,"type":attachment.mime],"totalSize":String(size)]]
         if size == 0 { spec["finishWrite"] = true }
         let initial = try Self.decoder().decode(Upload.self, from: await data(request("attachments:upload", method:"POST", body:JSONSerialization.data(withJSONObject:spec))))
         if initial.attachment != nil { return }
@@ -155,7 +155,8 @@ public final class MemosClient: MemosAPI, Sendable {
         }
     }
     public func download(_ attachment: RemoteAttachment, destination: URL) async throws {
-        let url = attachment.externalLink.flatMap(URL.init(string:)) ?? server.appending(path:"file/" + attachment.name)
+        let filename = attachment.filename.isEmpty ? "attachment" : attachment.filename
+        let url = attachment.externalLink.flatMap(URL.init(string:)) ?? server.appending(path:"file/" + attachment.name).appending(path: filename)
         try await downloadFile(url, destination: destination)
     }
     public func downloadFile(_ url: URL, destination: URL) async throws {

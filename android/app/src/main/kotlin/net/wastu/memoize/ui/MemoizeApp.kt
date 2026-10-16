@@ -645,16 +645,21 @@ private fun NotesList(
                                             )
                                         }
                                     }
-                                    Box(Modifier.fillMaxWidth().clipToBounds()) {
-                                        MarkdownPreviewText(
-                                            note.title,
-                                            LiteralSearch.ranges(note.title, query),
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 3,
-                                            fullSource = note.content,
-                                            sourceOffset = note.content.indexOf(note.title).coerceAtLeast(0)
-                                        )
+                                    val previewContent = if (query.isEmpty()) note.content.trim() else result.excerpt
+                                    val previewMatches = if (query.isEmpty()) emptyList() else result.excerptMatches
+                                    val sourceOffset = if (query.isEmpty()) note.content.indexOf(previewContent).coerceAtLeast(0) else result.excerptOffset
+                                    if (previewContent.isNotBlank()) {
+                                        Box(Modifier.fillMaxWidth().clipToBounds()) {
+                                            MarkdownPreviewText(
+                                                previewContent,
+                                                previewMatches,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 8,
+                                                fullSource = note.content,
+                                                sourceOffset = sourceOffset
+                                            )
+                                        }
                                     }
                                 }
                                 if (selecting) {
@@ -664,18 +669,6 @@ private fun NotesList(
                                         modifier = Modifier.size(24.dp).clearAndSetSemantics {}
                                     )
                                 }
-                            }
-
-                            if (result.excerpt.isNotBlank() && result.excerpt != note.title) {
-                                MarkdownPreviewText(
-                                    result.excerpt,
-                                    result.excerptMatches,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 6,
-                                    fullSource = note.content,
-                                    sourceOffset = result.excerptOffset
-                                )
                             }
 
                             if (note.attachments.isNotEmpty()) {

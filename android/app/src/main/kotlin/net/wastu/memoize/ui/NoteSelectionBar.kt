@@ -19,8 +19,8 @@ import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun NoteSelectionBar(count: Int, busy: Boolean, archived: Boolean, onClose: () -> Unit,
-    onArchive: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit, onSelectAll: () -> Unit, onClear: () -> Unit, onFilters: () -> Unit) {
+internal fun NoteSelectionBar(count: Int, busy: Boolean, archived: Boolean, pinned: Boolean = false, onClose: () -> Unit,
+    onArchive: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit, onSelectAll: () -> Unit, onClear: () -> Unit, onFilters: () -> Unit, onTogglePin: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     TopAppBar(modifier = Modifier.testTag("note-selection-bar"),
         title = { Text("$count selected", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -29,6 +29,7 @@ internal fun NoteSelectionBar(count: Int, busy: Boolean, archived: Boolean, onCl
         actions = {
             if (busy) CircularProgressIndicator(Modifier.size(24.dp))
             else {
+                IconAction(R.drawable.ic_pin, if (pinned) "Unpin selected notes" else "Pin selected notes", count > 0, onTogglePin)
                 IconAction(R.drawable.ic_archive, if (archived) "Unarchive selected notes" else "Archive selected notes", count > 0, onArchive)
                 Box {
                     IconAction(R.drawable.ic_more, "Selection actions") { menu = true }

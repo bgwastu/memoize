@@ -322,6 +322,29 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                     } finally { batchBusy = false }
                 }
             }
+            val selectedNotes = results.filter { it.note.id in selection }
+            val allPinned = selectedNotes.isNotEmpty() && selectedNotes.all { it.note.pinned }
+            fun toggleSelectionPin() {
+                if (batchBusy || selection.isEmpty()) return
+                val ids = selection.toSet()
+                val repository = notes
+                val targetPinned = !allPinned
+                batchBusy = true
+                scope.launch {
+                    try {
+                        for (id in ids) {
+                            repository.setPinned(id, targetPinned)
+                        }
+                        exitSelection()
+                        snackbar.showSnackbar("${ids.size} ${if (ids.size == 1) "note" else "notes"} ${if (targetPinned) "pinned" else "unpinned"}")
+                    } catch (exception: Exception) {
+                        if (exception is kotlinx.coroutines.CancellationException) throw exception
+                        snackbar.showSnackbar(exception.message ?: "Unable to update pinned notes")
+                    } finally {
+                        batchBusy = false
+                    }
+                }
+            }
             BackHandler(selecting) { if (!batchBusy) exitSelection() }
             val input: @Composable () -> Unit = {
                 val fieldFocus = LocalFocusManager.current
@@ -381,10 +404,20 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             Scaffold(
                 modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().nestedScroll(createButtonScroll).nestedScroll(headerScroll.nestedScrollConnection),
                 topBar = {
-                    if (selecting) NoteSelectionBar(selection.size, batchBusy, filter.state == NoteState.ARCHIVED,
-                        onClose = ::exitSelection, onArchive = { changeSelection(false) }, onDelete = { changeSelection(true) },
-                        onShare = ::shareSelection, onSelectAll = { selection = results.map { it.note.id } }, onClear = ::exitSelection,
-                        onFilters = { filters = true })
+                    if (selecting) NoteSelectionBar(
+                        count = selection.size,
+                        busy = batchBusy,
+                        archived = filter.state == NoteState.ARCHIVED,
+                        pinned = allPinned,
+                        onClose = ::exitSelection,
+                        onArchive = { changeSelection(false) },
+                        onDelete = { changeSelection(true) },
+                        onShare = ::shareSelection,
+                        onSelectAll = { selection = results.map { it.note.id } },
+                        onClear = ::exitSelection,
+                        onFilters = { filters = true },
+                        onTogglePin = ::toggleSelectionPin
+                    )
                     else TopAppBar(title = {
                         // Mirror the app bar's title inset at the trailing edge.
                         TopSearchBar(searchState, inputField = input, modifier = Modifier.padding(end = 16.dp),
@@ -428,7 +461,6 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                             }
                         },
                         onTagClick = { tag = it },
-                        onTogglePin = { noteToPin -> scope.launch { notes.setPinned(noteToPin.id, !noteToPin.pinned) } },
                         isRefreshing = isRefreshing,
                         onRefresh = {
                             scope.launch {
@@ -465,7 +497,6 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                         }
                     },
                     onTagClick = { tag = it; scope.launch { searchState.animateToCollapsed() } },
-                    onTogglePin = { noteToPin -> scope.launch { notes.setPinned(noteToPin.id, !noteToPin.pinned) } },
                     isRefreshing = false,
                     onRefresh = {}
                 )
@@ -521,7 +552,6 @@ private fun NotesList(
     onImageClick: (NoteAttachment) -> Unit,
     onFileClick: (NoteAttachment) -> Unit,
     onTagClick: (String) -> Unit,
-    onTogglePin: (net.wastu.memoize.data.NotePreview) -> Unit,
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
 ) {
@@ -723,23 +753,6 @@ private fun NotesList(
                                             "Needs attention",
                                             color = MaterialTheme.colorScheme.error,
                                             style = MaterialTheme.typography.labelSmall
-                                        )
-                                    }
-                                }
-                                if (!selecting) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .clickable { onTogglePin(note) },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_pin),
-                                            contentDescription = if (note.pinned) "Unpin note" else "Pin note",
-                                            tint = if (note.pinned) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
-                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }

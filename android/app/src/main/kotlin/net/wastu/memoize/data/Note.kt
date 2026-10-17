@@ -39,6 +39,11 @@ data class NoteAttachment(
 ) {
     val isImage: Boolean get() = mimeType.startsWith("image/")
 }
+data class NoteLocation(
+    val placeholder: String,
+    val latitude: Double,
+    val longitude: Double,
+)
 
 /** A durable body/version at the remote API boundary, independent of client clocks. */
 data class MemoSnapshot(
@@ -50,10 +55,11 @@ data class MemoSnapshot(
     val visibility: NoteVisibility = NoteVisibility.PRIVATE,
     val attachments: List<NoteAttachment> = emptyList(),
     val pinned: Boolean = false,
+    val location: NoteLocation? = null,
 ) {
     fun sameBody(other: MemoSnapshot): Boolean =
         content == other.content && state == other.state && visibility == other.visibility &&
-            pinned == other.pinned &&
+            pinned == other.pinned && location == other.location &&
             attachments.map { it.id }.toSet() == other.attachments.map { it.id }.toSet()
 }
 
@@ -80,14 +86,15 @@ data class Note(
     val tags: List<String>,
     val problem: NoteProblem? = null,
     val pinned: Boolean = false,
+    val location: NoteLocation? = null,
 ) {
     val hasConflict: Boolean get() = problem == NoteProblem.CONFLICT
     val isDirty: Boolean get() = revision > syncedRevision || deleteAfter != null
-    val isBlankDraft: Boolean get() = remoteName == null && content.isBlank() && attachments.isEmpty()
+    val isBlankDraft: Boolean get() = remoteName == null && content.isBlank() && attachments.isEmpty() && location == null
     val title: String get() = content.lineSequence().firstOrNull { it.isNotBlank() }
         ?.trim()?.take(120) ?: "New note"
     fun snapshot(): MemoSnapshot = MemoSnapshot(
-        remoteName, content, createdAt, updatedAt, state, visibility, attachments, pinned,
+        remoteName, content, createdAt, updatedAt, state, visibility, attachments, pinned, location,
     )
 }
 
@@ -105,9 +112,10 @@ data class NotePreview(
     val tags: List<String>,
     val problem: NoteProblem? = null,
     val pinned: Boolean = false,
+    val location: NoteLocation? = null,
 ) {
     val hasConflict: Boolean get() = problem == NoteProblem.CONFLICT
-    val isBlankDraft: Boolean get() = remoteName == null && content.isBlank() && attachments.isEmpty()
+    val isBlankDraft: Boolean get() = remoteName == null && content.isBlank() && attachments.isEmpty() && location == null
     val title: String get() = content.lineSequence().firstOrNull { it.isNotBlank() }
         ?.trim()?.take(120) ?: "New note"
 }

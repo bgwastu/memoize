@@ -192,8 +192,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
     val loadedResults by resultFlow.collectAsStateWithLifecycle(null)
     val results = loadedResults.orEmpty()
     val appBarState = rememberTopAppBarState()
-    val headerScroll = TopAppBarDefaults.enterAlwaysScrollBehavior(appBarState,
-        canScroll = { results.isNotEmpty() && !selecting && searchState.currentValue == SearchBarValue.Collapsed })
+    val headerScroll = TopAppBarDefaults.pinnedScrollBehavior(appBarState)
     LaunchedEffect(listState.canScrollBackward) {
         if (!listState.canScrollBackward) appBarState.heightOffset = 0f
     }
@@ -422,7 +421,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                         // Mirror the app bar's title inset at the trailing edge.
                         TopSearchBar(searchState, inputField = input, modifier = Modifier.padding(end = 16.dp),
                             windowInsets = WindowInsets(0))
-                    }, expandedHeight = 80.dp, scrollBehavior = headerScroll,
+                    }, scrollBehavior = headerScroll,
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,
                             scrolledContainerColor = MaterialTheme.colorScheme.surface))
                 },
@@ -748,6 +747,24 @@ private fun NotesList(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    note.location?.let { loc ->
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_location),
+                                                contentDescription = "Location",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(Modifier.width(2.dp))
+                                            Text(
+                                                loc.placeholder,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
                                     if (note.error != null) {
                                         Text(
                                             "Needs attention",

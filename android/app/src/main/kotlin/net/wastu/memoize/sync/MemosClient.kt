@@ -7,6 +7,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import net.wastu.memoize.data.MemoSnapshot
 import net.wastu.memoize.data.NoteAttachment
+import net.wastu.memoize.data.NoteLocation
 import net.wastu.memoize.data.NoteState
 import net.wastu.memoize.data.NoteVisibility
 import org.json.JSONArray
@@ -106,6 +107,17 @@ class MemosClient(
         if (base != null && base.pinned != snapshot.pinned) {
             body.put("pinned", snapshot.pinned); mask += "pinned"
         }
+        if (base != null && base.location != snapshot.location) {
+            if (snapshot.location != null) {
+                body.put("location", JSONObject()
+                    .put("placeholder", snapshot.location.placeholder)
+                    .put("latitude", snapshot.location.latitude)
+                    .put("longitude", snapshot.location.longitude))
+            } else {
+                body.put("location", JSONObject.NULL)
+            }
+            mask += "location"
+        }
         // Omitting updateTime while including the mask requests the server's timestamp.
         return memo(json(requireNotNull(snapshot.remoteName), "PATCH", mapOf("updateMask" to mask.joinToString(",")), body))
     }
@@ -189,6 +201,14 @@ class MemosClient(
 
     private fun memoBody(snapshot: MemoSnapshot): JSONObject = JSONObject().put("content", snapshot.content)
         .put("pinned", snapshot.pinned)
+        .apply {
+            snapshot.location?.let { loc ->
+                put("location", JSONObject()
+                    .put("placeholder", loc.placeholder)
+                    .put("latitude", loc.latitude)
+                    .put("longitude", loc.longitude))
+            }
+        }
         .put("attachments", JSONArray(snapshot.attachments.map {
             JSONObject().put("name", "attachments/${resourceId(it.remoteName ?: it.id, "attachments")}")
         }))
@@ -196,6 +216,14 @@ class MemosClient(
     private fun memo(value: JSONObject): MemoSnapshot {
         val created = Instant.parse(value.getString("createTime")).toEpochMilli()
         val files = value.optJSONArray("attachments") ?: JSONArray()
+        val locObj = value.optJSONObject("location")
+        val loc = locObj?.let {
+            NoteLocation(
+                it.optString("placeholder"),
+                it.optDouble("latitude", 0.0),
+                it.optDouble("longitude", 0.0)
+            )
+        }
         return MemoSnapshot(
             "memos/${resourceId(value.getString("name"), "memos")}", value.optString("content"), created,
             value.optString("updateTime").takeIf { it.isNotBlank() }?.let { Instant.parse(it).toEpochMilli() } ?: created,
@@ -203,6 +231,7 @@ class MemosClient(
             NoteVisibility.valueOf(value.optString("visibility", "PRIVATE")),
             (0 until files.length()).map { attachment(files.getJSONObject(it)) },
             pinned = value.optBoolean("pinned", false),
+            location = loc,
         )
     }
 

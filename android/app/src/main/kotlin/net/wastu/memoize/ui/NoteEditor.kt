@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
@@ -40,11 +41,20 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import kotlinx.coroutines.flow.MutableStateFlow
 import net.wastu.memoize.data.NoteAttachment
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import net.wastu.memoize.data.NoteLocation
+import net.wastu.memoize.location.LocationService
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -251,6 +261,39 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia(), import)
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument(), import)
+    var locationDialogOpen by remember { mutableStateOf(false) }
+    var pendingLocation by remember { mutableStateOf<NoteLocation?>(null) }
+    val fetchAndOpenLocation: () -> Unit = {
+        scope.launch {
+            val loc = LocationService.getCurrentLocation(context)
+            pendingLocation = loc ?: NoteLocation("", 0.0, 0.0)
+            locationDialogOpen = true
+        }
+    }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[android.Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[android.Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            fetchAndOpenLocation()
+        } else {
+            pendingLocation = NoteLocation("", 0.0, 0.0)
+            locationDialogOpen = true
+        }
+    }
+    val requestLocation: () -> Unit = {
+        if (LocationService.hasPermission(context)) {
+            fetchAndOpenLocation()
+        } else {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
     val colors = MaterialTheme.colorScheme
     val palette = SourcePalette(colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
         colors.surfaceContainerHigh.toArgb(), colors.onTertiaryContainer.toArgb(), colors.tertiaryContainer.toArgb(),
@@ -261,19 +304,18 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), topBar = {
         TopAppBar(
             title = {
-                Column {
+                if (saveStatus.saving) {
                     Text(
-                        text = if (saveStatus.saving) "Saving…" else "Saved",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (saveStatus.saving) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = timestamp(note.updatedAt),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "Saving…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             },
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                scrolledContainerColor = MaterialTheme.colorScheme.surface
+            ),
             navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", !leaving, close) },
             actions = {
                 IconAction(
@@ -293,6 +335,17 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                 }
                 IconAction(R.drawable.ic_more, "Note options") { menu = true }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Edited ${timestamp(note.updatedAt)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onClick = {},
+                        enabled = false
+                    )
                     DropdownMenuItem(
                         text = { Text(if (note.pinned) "Unpin note" else "Pin to top") },
                         leadingIcon = { AppIcon(R.drawable.ic_pin) },
@@ -378,6 +431,31 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
         Column(Modifier.widthIn(max = 760.dp).fillMaxSize()) {
             NativeSourceField(state, enabled = !leaving,
                 modifier = Modifier.weight(1f).fillMaxWidth())
+            note.location?.let { loc ->
+                EditorLocationChip(
+                    location = loc,
+                    onOpen = { target ->
+                        val geoUri = Uri.parse("geo:${target.latitude},${target.longitude}?q=${target.latitude},${target.longitude}(${Uri.encode(target.placeholder)})")
+                        val intent = Intent(Intent.ACTION_VIEW, geoUri)
+                        runCatching { context.startActivity(intent) }.onFailure {
+                            val webUri = Uri.parse("https://www.google.com/maps/search/?api=1&query=${target.latitude},${target.longitude}")
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, webUri)) }
+                        }
+                    },
+                    onRemove = {
+                        scope.launch {
+                            try {
+                                val saved = session.flush(snapshot(), state.characterEpoch)
+                                notes.setLocation(saved.id, null)
+                                snackbar.showSnackbar("Location removed")
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                snackbar.showSnackbar(e.message ?: "Unable to remove location")
+                            }
+                        }
+                    }
+                )
+            }
             var previewImage by remember { mutableStateOf<NoteAttachment?>(null) }
             val serverConfig by (graph.connection?.settings ?: remember { MutableStateFlow(ConnectionSettings()) }).collectAsStateWithLifecycle()
             EditorAttachmentStrip(
@@ -474,9 +552,32 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
         }
         }
     }
-    if (attachmentChoice) AttachmentChoiceSheet(onDismiss = { attachmentChoice = false },
+    if (attachmentChoice) AttachmentChoiceSheet(
+        onDismiss = { attachmentChoice = false },
         onPhoto = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
-        onFile = { filePicker.launch(arrayOf("*/*")) })
+        onFile = { filePicker.launch(arrayOf("*/*")) },
+        onLocation = requestLocation
+    )
+    if (locationDialogOpen && pendingLocation != null) {
+        LocationEditDialog(
+            initial = pendingLocation!!,
+            onDismiss = { locationDialogOpen = false; pendingLocation = null },
+            onConfirm = { loc ->
+                locationDialogOpen = false
+                pendingLocation = null
+                scope.launch {
+                    try {
+                        val saved = session.flush(snapshot(), state.characterEpoch)
+                        notes.setLocation(saved.id, loc)
+                        snackbar.showSnackbar("Location attached")
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        snackbar.showSnackbar(e.message ?: "Unable to attach location")
+                    }
+                }
+            }
+        )
+    }
     if (history) RecoveryBrowser(notes, noteId = note.id, onDismiss = { history = false }, onRestore = { recovery ->
         check(state.commandReady) { "Finish the current input before restoring this version." }
         leaving = true
@@ -497,7 +598,12 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AttachmentChoiceSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onFile: () -> Unit) {
+private fun AttachmentChoiceSheet(
+    onDismiss: () -> Unit,
+    onPhoto: () -> Unit,
+    onFile: () -> Unit,
+    onLocation: () -> Unit,
+) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     var choosing by remember { mutableStateOf(false) }
@@ -517,7 +623,111 @@ private fun AttachmentChoiceSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, on
                     ListItem(headlineContent = { Text("Document or file") }, leadingContent = { AppIcon(R.drawable.ic_file) },
                         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onFile) })
+                    ListItem(headlineContent = { Text("Location") }, leadingContent = { AppIcon(R.drawable.ic_location) },
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onLocation) })
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocationEditDialog(
+    initial: NoteLocation,
+    onDismiss: () -> Unit,
+    onConfirm: (NoteLocation) -> Unit
+) {
+    var name by remember { mutableStateOf(initial.placeholder) }
+    var latText by remember { mutableStateOf(if (initial.latitude != 0.0) initial.latitude.toString() else "") }
+    var lngText by remember { mutableStateOf(if (initial.longitude != 0.0) initial.longitude.toString() else "") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Attach location") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Place name or label") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = latText,
+                        onValueChange = { latText = it },
+                        label = { Text("Latitude") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = lngText,
+                        onValueChange = { lngText = it },
+                        label = { Text("Longitude") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val lat = latText.toDoubleOrNull() ?: 0.0
+                    val lng = lngText.toDoubleOrNull() ?: 0.0
+                    val label = name.ifBlank { "%.4f, %.4f".format(java.util.Locale.US, lat, lng) }
+                    onConfirm(NoteLocation(label, lat, lng))
+                },
+                enabled = name.isNotBlank() || (latText.toDoubleOrNull() != null && lngText.toDoubleOrNull() != null)
+            ) {
+                Text("Attach")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun EditorLocationChip(
+    location: NoteLocation,
+    onOpen: (NoteLocation) -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onOpen(location) }
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppIcon(R.drawable.ic_location, "Location")
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = location.placeholder,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            IconButton(onClick = onRemove, modifier = Modifier.size(28.dp)) {
+                AppIcon(R.drawable.ic_close, "Remove location")
             }
         }
     }

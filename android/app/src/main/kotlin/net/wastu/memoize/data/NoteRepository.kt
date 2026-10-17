@@ -142,6 +142,13 @@ class NoteRepository private constructor(
         dao.put(saved); queue(saved); saved.note()
     }
 
+    suspend fun setLocation(id: String, location: NoteLocation?): Note = transaction {
+        val current = requireNote(id)
+        if (SnapshotCodec.location(current.locationJson) == location) return@transaction current.note()
+        val saved = current.copy(locationJson = SnapshotCodec.location(location), revision = current.revision + 1, updatedAt = clock())
+        dao.put(saved); queue(saved); saved.note()
+    }
+
     suspend fun setVisibility(id: String, visibility: NoteVisibility): Note = transaction {
         val current = requireNote(id)
         if (current.visibility == visibility.name) return@transaction current.note()
@@ -253,6 +260,7 @@ class NoteRepository private constructor(
             remoteName = remote.remoteName, syncedRevision = maxOf(current.syncedRevision, sentRevision),
             baseJson = SnapshotCodec.snapshot(remote), sentJson = null, sentRevision = null,
             attachmentsJson = SnapshotCodec.attachments(attachments), error = null,
+            pinned = remote.pinned, locationJson = SnapshotCodec.location(remote.location),
         )
         dao.put(saved)
         if (saved.revision > saved.syncedRevision || saved.deleteAfter != null) queue(saved) else dao.deletePending(account, id)
@@ -326,6 +334,7 @@ class NoteRepository private constructor(
             selectionEnd = current?.selectionEnd?.coerceAtMost(remote.content.length) ?: 0,
             scroll = current?.scroll ?: 0,
             pinned = remote.pinned,
+            locationJson = SnapshotCodec.location(remote.location),
         )
         dao.put(saved); saved.note()
     }
@@ -353,6 +362,7 @@ class NoteRepository private constructor(
                 if (current.note().attachments.any { file -> file.id == it.id }) it else it.copy(uploaded = false)
             }),
             state = snapshot.state.name, visibility = if (existing == null) NoteVisibility.PRIVATE.name else snapshot.visibility.name,
+            pinned = snapshot.pinned, locationJson = SnapshotCodec.location(snapshot.location),
             revision = current.revision + 1, updatedAt = clock(), error = null, problemCode = null, deleteAfter = null,
             sentJson = null, sentRevision = null)
         dao.put(saved); queue(saved)
@@ -646,11 +656,11 @@ class NoteRepository private constructor(
         NoteVisibility.valueOf(visibility), remoteName, revision, syncedRevision,
         baseJson?.let(::readSnapshot), sentJson?.let(::readSnapshot), sentRevision,
         deleteAfter, if (hasConflict) CONFLICT_MESSAGE else error, selectionStart, selectionEnd, scroll,
-        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), problem, pinned)
+        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), problem, pinned, SnapshotCodec.location(locationJson))
 
     private fun NotePreviewRow.preview(): NotePreview = NotePreview(id, account, content, createdAt, updatedAt,
         NoteState.valueOf(state), remoteName, if (problemCode == NoteProblem.CONFLICT.code) CONFLICT_MESSAGE else error,
-        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), NoteProblem.entries.firstOrNull { it.code == problemCode }, pinned)
+        readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), NoteProblem.entries.firstOrNull { it.code == problemCode }, pinned, SnapshotCodec.location(locationJson))
 
     override fun close() { database.close() }
 

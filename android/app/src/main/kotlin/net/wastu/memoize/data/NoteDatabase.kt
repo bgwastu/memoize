@@ -46,6 +46,7 @@ internal data class NoteEntity(
     val tagsJson: String = "[]",
     @ColumnInfo(defaultValue = "NULL") val problemCode: String? = null,
     @ColumnInfo(defaultValue = "0") val pinned: Boolean = false,
+    @ColumnInfo(defaultValue = "NULL") val locationJson: String? = null,
 )
 
 /** A Room projection keeps list reads independent of potentially large sync snapshots. */
@@ -63,6 +64,7 @@ internal data class NotePreviewRow(
     val tagsJson: String,
     val problemCode: String?,
     val pinned: Boolean = false,
+    val locationJson: String? = null,
 )
 
 @Entity(tableName = "pending_operations", primaryKeys = ["account", "noteId"])
@@ -103,7 +105,7 @@ internal interface NoteDao {
     suspend fun remote(account: String, name: String): NoteEntity?
     @Query("SELECT * FROM notes WHERE account = :account ORDER BY createdAt DESC, id ASC")
     suspend fun all(account: String): List<NoteEntity>
-    @Query("SELECT account, id, content, searchContent, createdAt, updatedAt, state, remoteName, error, attachmentsJson, tagsJson, problemCode, pinned FROM notes WHERE account = :account AND deleteAfter IS NULL AND state = :state ORDER BY pinned DESC, createdAt DESC, id ASC")
+    @Query("SELECT account, id, content, searchContent, createdAt, updatedAt, state, remoteName, error, attachmentsJson, tagsJson, problemCode, pinned, locationJson FROM notes WHERE account = :account AND deleteAfter IS NULL AND state = :state ORDER BY pinned DESC, createdAt DESC, id ASC")
     suspend fun previews(account: String, state: String): List<NotePreviewRow>
     @Query("SELECT tagsJson FROM notes WHERE account = :account AND deleteAfter IS NULL")
     suspend fun tagRows(account: String): List<String>
@@ -142,7 +144,7 @@ internal interface NoteDao {
 
 @Database(
     entities = [NoteEntity::class, PendingEntity::class, RecoveryEntity::class, MetadataEntity::class, AttachmentCleanupEntity::class],
-    version = 3, exportSchema = true,
+    version = 4, exportSchema = true,
 )
 internal abstract class NoteDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
@@ -167,6 +169,11 @@ internal abstract class NoteDatabase : RoomDatabase() {
                 object : Migration(2, 3) {
                     override fun migrate(connection: SQLiteConnection) {
                         connection.exec("ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+                    }
+                },
+                object : Migration(3, 4) {
+                    override fun migrate(connection: SQLiteConnection) {
+                        connection.exec("ALTER TABLE notes ADD COLUMN locationJson TEXT DEFAULT NULL")
                     }
                 }
             )

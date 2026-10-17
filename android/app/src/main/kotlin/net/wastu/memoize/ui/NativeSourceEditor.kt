@@ -105,6 +105,7 @@ internal class NativeSourceState(note: Note, selection: TextRange) {
     fun indent(outdent: Boolean) { view?.indent(outdent) }
     fun format(format: SourceFormat) { view?.format(format) }
     fun formatBlock(format: SourceBlockFormat) { view?.formatBlock(format) }
+    fun finishComposition() { view?.finishComposition() }
     fun replace(content: String, range: TextRange, remote: Boolean = false): Boolean = view?.replaceSource(content, range, remote) == true
     /** Accept committed input only through the authoritative native buffer. */
     suspend fun acceptIncoming(note: Note, session: EditorSession) {
@@ -277,8 +278,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                 history.begin(range(), if (composing() != null) EditKind.COMPOSITION else EditKind.TYPING)
                 watcherDepth++
                 val selected = range()
-                val eligible = !decorating && composing() == null && !operationHadComposition && operationKind != EditKind.COMPOSITION &&
-                    selected.collapsed && selected.start == start && count == 0 && after == 1
+                val eligible = !decorating && selected.collapsed && selected.start == start && count == 0 && after == 1
                 changes.addLast(Change(start, TextUtils.substring(requireNotNull(source), start, start + count), continueOnNewline = eligible))
             }
             override fun onTextChanged(source: CharSequence?, start: Int, before: Int, count: Int) {
@@ -301,7 +301,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                 val change = changes.removeLast()
                 history.record(TextDelta(change.start, change.removed, change.inserted))
                 if (change.removed != change.inserted) onCharactersChanged?.invoke()
-                if (change.inserted == "\n" && change.removed.isEmpty() && change.continueOnNewline && composing() == null) {
+                if (change.inserted == "\n" && change.removed.isEmpty() && change.continueOnNewline) {
                     val original = StringBuilder(requireNotNull(source)).deleteCharAt(change.start).toString()
                     continueList(original, change.start)?.let { plan ->
                         history.begin(range(), EditKind.COMMAND)
@@ -553,6 +553,19 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
 
     private fun canReplaceSource() = ready && idle() && composing() == null
     private fun canCommand() = isEnabled && canReplaceSource()
+    fun finishComposition() {
+        if (composing() != null) {
+            val connection = currentConnection
+            if (connection != null) {
+                operation(EditKind.COMPOSITION) { connection.finishComposingText() }
+            }
+            val body = text
+            if (body != null) {
+                BaseInputConnection.removeComposingSpans(body)
+            }
+            settle()
+        }
+    }
     fun indent(outdent: Boolean) { if (canCommand()) sourceIndent(revision, range(), outdent)?.let(::command) }
     fun format(format: SourceFormat) { if (canCommand()) formatSourceAtSelection(revision, range(), format)?.let(::command) }
     fun formatBlock(format: SourceBlockFormat) { if (canCommand()) formatBlocks(revision, range(), format)?.let(::command) }
@@ -580,11 +593,8 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     }
     private fun replay(redo: Boolean) {
         if (!isEnabled || !idle()) return
-        if (composing() != null) {
-            val connection = currentConnection ?: return
-            operation(EditKind.COMPOSITION) { connection.finishComposingText() }
-            if (composing() != null || !idle()) return
-        }
+        finishComposition()
+        if (!idle()) return
         settle()
         val transaction = (if (redo) history.nextRedo() else history.nextUndo()) ?: return
         val deltas = if (redo) transaction.changes else transaction.changes.asReversed()

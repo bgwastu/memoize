@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -369,5 +370,28 @@ class NoteRepositoryTest {
             assertTrue(later.recoveries().isEmpty())
             assertTrue(later.protectedPaths().contains(restoredOriginal.absolutePath))
         } finally { local.close(); context.deleteDatabase(database) }
+    }
+
+    @Test
+    fun noteLocationPersistsAndUpdatesCleanly() = runTest {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val database = "location-${UUID.randomUUID()}.db"
+        val notes = NoteRepository.open(context, "loc-account", database)
+        try {
+            val note = notes.create("loc-note")
+            assertNull(note.location)
+            val loc = NoteLocation("Central Park, NY", 40.785091, -73.968285)
+            val withLoc = notes.setLocation("loc-note", loc)
+            assertEquals(loc, withLoc.location)
+            val reloaded = notes.get("loc-note")
+            assertNotNull(reloaded)
+            assertEquals(loc, reloaded!!.location)
+            val cleared = notes.setLocation("loc-note", null)
+            assertNull(cleared.location)
+            assertNull(notes.get("loc-note")!!.location)
+        } finally {
+            notes.close()
+            context.deleteDatabase(database)
+        }
     }
 }

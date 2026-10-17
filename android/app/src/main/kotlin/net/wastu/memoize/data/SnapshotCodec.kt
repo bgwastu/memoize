@@ -12,6 +12,23 @@ internal object SnapshotCodec {
     fun tags(json: String): List<String> = JSONArray(json).let { array ->
         (0 until array.length()).map { array.getString(it) }
     }
+    fun location(value: NoteLocation?): String? = value?.let {
+        JSONObject().apply {
+            put("placeholder", it.placeholder)
+            put("latitude", it.latitude)
+            put("longitude", it.longitude)
+        }.toString()
+    }
+    fun location(json: String?): NoteLocation? = json?.takeIf { it.isNotBlank() }?.let { raw ->
+        runCatching {
+            val obj = JSONObject(raw)
+            NoteLocation(
+                obj.getString("placeholder"),
+                obj.getDouble("latitude"),
+                obj.getDouble("longitude")
+            )
+        }.getOrNull()
+    }
     fun snapshot(value: MemoSnapshot): String = JSONObject().apply {
         put("remoteName", value.remoteName)
         put("content", value.content)
@@ -20,14 +37,30 @@ internal object SnapshotCodec {
         put("state", value.state.name)
         put("visibility", value.visibility.name)
         put("pinned", value.pinned)
+        value.location?.let { loc ->
+            put("location", JSONObject().apply {
+                put("placeholder", loc.placeholder)
+                put("latitude", loc.latitude)
+                put("longitude", loc.longitude)
+            })
+        }
         put("attachments", JSONArray(attachments(value.attachments)))
     }.toString()
     fun snapshot(json: String): MemoSnapshot = JSONObject(json).let {
+        val locObj = it.optJSONObject("location")
+        val loc = locObj?.let { obj ->
+            NoteLocation(
+                obj.getString("placeholder"),
+                obj.getDouble("latitude"),
+                obj.getDouble("longitude")
+            )
+        }
         MemoSnapshot(
             nullable(it, "remoteName"), it.getString("content"), it.getLong("createdAt"),
             it.getLong("updatedAt"), NoteState.valueOf(it.getString("state")),
             NoteVisibility.valueOf(it.getString("visibility")), attachments(it.getJSONArray("attachments").toString()),
             pinned = it.optBoolean("pinned", false),
+            location = loc,
         )
     }
     private fun attachment(value: NoteAttachment): JSONObject = JSONObject().apply {

@@ -315,6 +315,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                 scope.launch {
                     try {
                         val selected = ids.map { requireNotNull(repository.get(it)) { "A selected note is no longer available." } }
+                        exitSelection(); batchBusy = false
                         shareSelectedNotes(context, selected)
                     } catch (exception: Exception) {
                         if (exception is kotlinx.coroutines.CancellationException) throw exception
@@ -335,7 +336,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                         for (id in ids) {
                             repository.setPinned(id, targetPinned)
                         }
-                        exitSelection()
+                        exitSelection(); batchBusy = false
                         snackbar.showSnackbar("${ids.size} ${if (ids.size == 1) "note" else "notes"} ${if (targetPinned) "pinned" else "unpinned"}")
                     } catch (exception: Exception) {
                         if (exception is kotlinx.coroutines.CancellationException) throw exception

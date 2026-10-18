@@ -106,6 +106,7 @@ data class NotePreview(
     val createdAt: Long,
     val updatedAt: Long,
     val state: NoteState,
+    val visibility: NoteVisibility = NoteVisibility.PRIVATE,
     val remoteName: String?,
     val error: String?,
     val attachments: List<NoteAttachment>,

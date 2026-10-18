@@ -58,6 +58,7 @@ internal data class NotePreviewRow(
     val createdAt: Long,
     val updatedAt: Long,
     val state: String,
+    val visibility: String = "PRIVATE",
     val remoteName: String?,
     val error: String?,
     val attachmentsJson: String,
@@ -105,7 +106,7 @@ internal interface NoteDao {
     suspend fun remote(account: String, name: String): NoteEntity?
     @Query("SELECT * FROM notes WHERE account = :account ORDER BY createdAt DESC, id ASC")
     suspend fun all(account: String): List<NoteEntity>
-    @Query("SELECT account, id, content, searchContent, createdAt, updatedAt, state, remoteName, error, attachmentsJson, tagsJson, problemCode, pinned, locationJson FROM notes WHERE account = :account AND deleteAfter IS NULL AND state = :state ORDER BY pinned DESC, createdAt DESC, id ASC")
+    @Query("SELECT account, id, content, searchContent, createdAt, updatedAt, state, visibility, remoteName, error, attachmentsJson, tagsJson, problemCode, pinned, locationJson FROM notes WHERE account = :account AND deleteAfter IS NULL AND state = :state ORDER BY pinned DESC, createdAt DESC, id ASC")
     suspend fun previews(account: String, state: String): List<NotePreviewRow>
     @Query("SELECT tagsJson FROM notes WHERE account = :account AND deleteAfter IS NULL")
     suspend fun tagRows(account: String): List<String>

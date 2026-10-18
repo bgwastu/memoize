@@ -69,7 +69,7 @@ class NoteRepository private constructor(
         val query = LiteralSearch.prepare(filter.query)
         val indexQuery = query.indexExpression
         val rows = if (indexQuery == null) dao.previews(account, filter.state.name) else dao.queryPreviews(RoomRawQuery(
-            "SELECT notes.account, notes.id, notes.content, notes.searchContent, notes.createdAt, notes.updatedAt, notes.state, notes.remoteName, notes.error, notes.attachmentsJson, notes.tagsJson, notes.problemCode, notes.pinned FROM notes JOIN note_search ON notes.rowid = note_search.rowid WHERE notes.account = ? AND notes.deleteAfter IS NULL AND notes.state = ? AND note_search MATCH ? ORDER BY notes.pinned DESC, notes.createdAt DESC, notes.id ASC",
+            "SELECT notes.account, notes.id, notes.content, notes.searchContent, notes.createdAt, notes.updatedAt, notes.state, notes.visibility, notes.remoteName, notes.error, notes.attachmentsJson, notes.tagsJson, notes.problemCode, notes.pinned, notes.locationJson FROM notes JOIN note_search ON notes.rowid = note_search.rowid WHERE notes.account = ? AND notes.deleteAfter IS NULL AND notes.state = ? AND note_search MATCH ? ORDER BY notes.pinned DESC, notes.createdAt DESC, notes.id ASC",
         ) { statement -> statement.bindText(1, account); statement.bindText(2, filter.state.name); statement.bindText(3, indexQuery) })
         val results = rows.asSequence().onEach { queryContext.ensureActive() }
             .map { entity -> entity to entity.preview() }
@@ -659,7 +659,7 @@ class NoteRepository private constructor(
         readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), problem, pinned, SnapshotCodec.location(locationJson))
 
     private fun NotePreviewRow.preview(): NotePreview = NotePreview(id, account, content, createdAt, updatedAt,
-        NoteState.valueOf(state), remoteName, if (problemCode == NoteProblem.CONFLICT.code) CONFLICT_MESSAGE else error,
+        NoteState.valueOf(state), NoteVisibility.valueOf(visibility), remoteName, if (problemCode == NoteProblem.CONFLICT.code) CONFLICT_MESSAGE else error,
         readAttachments(attachmentsJson), SnapshotCodec.tags(tagsJson), NoteProblem.entries.firstOrNull { it.code == problemCode }, pinned, SnapshotCodec.location(locationJson))
 
     override fun close() { database.close() }

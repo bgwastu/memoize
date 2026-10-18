@@ -108,6 +108,7 @@ import net.wastu.memoize.data.NoteFilter
 import net.wastu.memoize.data.NoteSort
 import net.wastu.memoize.data.NoteResult
 import net.wastu.memoize.data.NoteState
+import net.wastu.memoize.data.NoteVisibility
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
@@ -667,24 +668,54 @@ private fun NotesList(
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                                 Column(Modifier.weight(1f)) {
-                                    if (note.pinned) {
+                                    val showHeader = note.pinned || note.visibility == NoteVisibility.PUBLIC
+                                    if (showHeader) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             modifier = Modifier.padding(bottom = 4.dp)
                                         ) {
-                                            Icon(
-                                                painter = painterResource(R.drawable.ic_pin),
-                                                contentDescription = "Pinned",
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(Modifier.width(4.dp))
-                                            Text(
-                                                "Pinned",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
+                                            if (note.pinned) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(
+                                                        painter = painterResource(R.drawable.ic_pin),
+                                                        contentDescription = "Pinned",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text(
+                                                        "Pinned",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                }
+                                            }
+                                            if (note.visibility == NoteVisibility.PUBLIC) {
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = MaterialTheme.colorScheme.primaryContainer
+                                                ) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Icon(
+                                                            painter = painterResource(R.drawable.ic_public),
+                                                            contentDescription = "Public note",
+                                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                            modifier = Modifier.size(11.dp)
+                                                        )
+                                                        Spacer(Modifier.width(3.dp))
+                                                        Text(
+                                                            "Public",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                    }
                                     }
                                     val previewContent = if (query.isEmpty()) note.content.trim() else result.excerpt
                                     val previewMatches = if (query.isEmpty()) emptyList() else result.excerptMatches

@@ -91,7 +91,7 @@ object LiteralSearch {
 
     fun result(note: Note, query: String): NoteResult {
         return result(NotePreview(note.id, note.account, note.content, note.createdAt, note.updatedAt,
-            note.state, note.remoteName, note.error, note.attachments, note.tags), prepare(query))
+            note.state, note.visibility, note.remoteName, note.error, note.attachments, note.tags, note.problem, note.pinned, note.location), prepare(query))
     }
 
     /** The repository's persisted fold avoids scanning each committed body again per query. */

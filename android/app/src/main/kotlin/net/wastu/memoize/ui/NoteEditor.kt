@@ -46,6 +46,8 @@ import android.net.Uri
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedTextField
 import net.wastu.memoize.data.NoteLocation
 import net.wastu.memoize.location.LocationService
@@ -319,36 +321,39 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
             navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", !leaving, close) },
             actions = {
                 IconAction(R.drawable.ic_more, "Note options") { menu = true }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenu(
+                    expanded = menu,
+                    onDismissRequest = { menu = false },
+                    modifier = Modifier.widthIn(min = 220.dp, max = 280.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ) {
                     DropdownMenuItem(
                         text = {
-                            Column {
-                                Text(
-                                    if (saveStatus.saving) "Saving…" else "Saved",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = if (saveStatus.saving) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    "Edited ${timestamp(note.updatedAt)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
+                            Text(
+                                if (saveStatus.saving) "Saving…" else "Saved • ${timestamp(note.updatedAt)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
                         },
                         leadingIcon = {
                             if (saveStatus.saving) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(24.dp),
                                     strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
                             } else {
                                 AppIcon(R.drawable.ic_check)
                             }
                         },
                         onClick = {},
-                        enabled = false
+                        enabled = false,
+                        colors = MenuDefaults.itemColors(
+                            disabledTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            disabledLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     DropdownMenuItem(
                         text = { Text(if (note.pinned) "Unpin note" else "Pin to top") },
                         leadingIcon = { AppIcon(R.drawable.ic_pin) },
@@ -431,6 +436,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                         leadingIcon = { AppIcon(R.drawable.ic_history) },
                         onClick = { menu = false; history = true }
                     )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     DropdownMenuItem(
                         text = { Text("Delete") },
                         leadingIcon = { AppIcon(R.drawable.ic_close) },

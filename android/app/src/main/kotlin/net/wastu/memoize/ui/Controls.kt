@@ -7,8 +7,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.painterResource
 
 @Composable
-fun AppIcon(@DrawableRes icon: Int, description: String? = null) {
-    Icon(painterResource(icon), description)
+fun AppIcon(
+    @DrawableRes icon: Int,
+    description: String? = null,
+    tint: androidx.compose.ui.graphics.Color = androidx.compose.material3.LocalContentColor.current
+) {
+    Icon(painterResource(icon), description, tint = tint)
 }
 
 @Composable

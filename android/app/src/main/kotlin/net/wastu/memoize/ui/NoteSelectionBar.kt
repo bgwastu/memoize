@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.*
@@ -33,15 +36,42 @@ internal fun NoteSelectionBar(count: Int, busy: Boolean, archived: Boolean, pinn
                 IconAction(R.drawable.ic_archive, if (archived) "Unarchive selected notes" else "Archive selected notes", count > 0, onArchive)
                 Box {
                     IconAction(R.drawable.ic_more, "Selection actions") { menu = true }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Delete") }, enabled = count > 0,
-                            onClick = { menu = false; onDelete() })
-                        DropdownMenuItem(text = { Text("Share text") }, enabled = count > 0,
-                            onClick = { menu = false; onShare() })
-                        DropdownMenuItem(text = { Text("Select all results") }, onClick = { menu = false; onSelectAll() })
-                        DropdownMenuItem(text = { Text("Sort and filter") }, onClick = { menu = false; onFilters() })
-                        DropdownMenuItem(text = { Text("Clear selection") }, enabled = count > 0,
-                            onClick = { menu = false; onClear() })
+                    DropdownMenu(
+                        expanded = menu,
+                        onDismissRequest = { menu = false },
+                        modifier = Modifier.widthIn(min = 200.dp, max = 280.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Select all results") },
+                            leadingIcon = { AppIcon(R.drawable.ic_checklist) },
+                            onClick = { menu = false; onSelectAll() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share text") },
+                            leadingIcon = { AppIcon(R.drawable.ic_attach) },
+                            enabled = count > 0,
+                            onClick = { menu = false; onShare() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Sort and filter") },
+                            leadingIcon = { AppIcon(R.drawable.ic_filter) },
+                            onClick = { menu = false; onFilters() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Clear selection") },
+                            leadingIcon = { AppIcon(R.drawable.ic_close) },
+                            enabled = count > 0,
+                            onClick = { menu = false; onClear() }
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                        DropdownMenuItem(
+                            text = { Text("Delete") },
+                            leadingIcon = { AppIcon(R.drawable.ic_close) },
+                            enabled = count > 0,
+                            onClick = { menu = false; onDelete() }
+                        )
                     }
                 }
             }

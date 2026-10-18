@@ -367,11 +367,23 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                             }
                             Box {
                                 IconAction(R.drawable.ic_more, "Note list options") { listMenu = true }
-                                DropdownMenu(expanded = listMenu, onDismissRequest = { listMenu = false }) {
-                                    DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { AppIcon(R.drawable.ic_settings) }, onClick = { listMenu = false; settings = true })
-                                    DropdownMenuItem(text = { Text("Select notes") }, onClick = {
-                                        listMenu = false; beginSelection()
-                                    })
+                                DropdownMenu(
+                                    expanded = listMenu,
+                                    onDismissRequest = { listMenu = false },
+                                    modifier = Modifier.widthIn(min = 200.dp, max = 280.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Settings") },
+                                        leadingIcon = { AppIcon(R.drawable.ic_settings) },
+                                        onClick = { listMenu = false; settings = true }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Select notes") },
+                                        leadingIcon = { AppIcon(R.drawable.ic_checklist) },
+                                        onClick = { listMenu = false; beginSelection() }
+                                    )
                                 }
                             }
                         }

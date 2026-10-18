@@ -638,7 +638,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
             val server = serverConfig.server.trim().trimEnd('/')
             val remote = note.remoteName?.removePrefix("memos/")
             if (server.isNotBlank() && !remote.isNullOrBlank()) {
-                "$server/m/$remote"
+                "$server/memos/$remote"
             } else null
         }
         PublicShareSheet(
@@ -653,6 +653,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                     try {
                         val saved = session.flush(snapshot(), state.characterEpoch)
                         notes.setVisibility(saved.id, next)
+                        graph.connection?.sync(force = true)
                         snackbar.showSnackbar(if (next == NoteVisibility.PUBLIC) "Shared to public" else "Set to private")
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e

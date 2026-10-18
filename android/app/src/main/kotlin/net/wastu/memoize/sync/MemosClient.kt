@@ -101,13 +101,13 @@ class MemosClient(
         val body = memoBody(snapshot)
         val mask = mutableListOf("content", "update_time", "attachments")
         if (base != null && base.state != snapshot.state) { body.put("state", snapshot.state.name); mask += "state" }
-        if (base != null && base.visibility != snapshot.visibility) {
+        if (base == null || base.visibility != snapshot.visibility) {
             body.put("visibility", snapshot.visibility.name); mask += "visibility"
         }
-        if (base != null && base.pinned != snapshot.pinned) {
+        if (base == null || base.pinned != snapshot.pinned) {
             body.put("pinned", snapshot.pinned); mask += "pinned"
         }
-        if (base != null && base.location != snapshot.location) {
+        if (base == null || base.location != snapshot.location) {
             if (snapshot.location != null) {
                 body.put("location", JSONObject()
                     .put("placeholder", snapshot.location.placeholder)

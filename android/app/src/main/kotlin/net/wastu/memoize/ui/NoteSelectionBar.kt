@@ -32,7 +32,7 @@ internal fun NoteSelectionBar(count: Int, busy: Boolean, archived: Boolean, pinn
         actions = {
             if (busy) CircularProgressIndicator(Modifier.size(24.dp))
             else {
-                IconAction(R.drawable.ic_pin, if (pinned) "Unpin selected notes" else "Pin selected notes", count > 0, onTogglePin)
+                IconAction(if (pinned) R.drawable.ic_pin_off else R.drawable.ic_pin, if (pinned) "Unpin selected notes" else "Pin selected notes", count > 0, onTogglePin)
                 IconAction(R.drawable.ic_archive, if (archived) "Unarchive selected notes" else "Archive selected notes", count > 0, onArchive)
                 Box {
                     IconAction(R.drawable.ic_more, "Selection actions") { menu = true }

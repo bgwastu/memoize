@@ -334,28 +334,68 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), topBar = {
         TopAppBar(
             title = {
-                if (note.visibility == NoteVisibility.PUBLIC) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.clickable { sharePublicModal = true }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (note.pinned) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.clickable {
+                                scope.launch {
+                                    try {
+                                        val updated = notes.togglePinned(note.id)
+                                        snackbar.showSnackbar(if (updated.pinned) "Pinned to top" else "Unpinned")
+                                    } catch (e: Exception) {
+                                        if (e is CancellationException) throw e
+                                        snackbar.showSnackbar(e.message ?: "Unable to update pin")
+                                    }
+                                }
+                            }
                         ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_public),
-                                contentDescription = "Public note",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                "Public",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_pin),
+                                    contentDescription = "Pinned note",
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "Pinned",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                    }
+                    if (note.visibility == NoteVisibility.PUBLIC) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.clickable { sharePublicModal = true }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_public),
+                                    contentDescription = "Public note",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    "Public",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
                         }
                     }
                 }
@@ -402,14 +442,13 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     DropdownMenuItem(
                         text = { Text(if (note.pinned) "Unpin note" else "Pin to top") },
-                        leadingIcon = { AppIcon(R.drawable.ic_pin) },
+                        leadingIcon = { AppIcon(if (note.pinned) R.drawable.ic_pin_off else R.drawable.ic_pin) },
                         onClick = {
                             menu = false
                             scope.launch {
                                 try {
-                                    val saved = session.flush(snapshot(), state.characterEpoch)
-                                    notes.setPinned(saved.id, !saved.pinned)
-                                    snackbar.showSnackbar(if (!saved.pinned) "Pinned to top" else "Unpinned")
+                                    val updated = notes.togglePinned(note.id)
+                                    snackbar.showSnackbar(if (updated.pinned) "Pinned to top" else "Unpinned")
                                 } catch (e: Exception) {
                                     if (e is CancellationException) throw e
                                     snackbar.showSnackbar(e.message ?: "Unable to update pin")
@@ -417,25 +456,9 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                             }
                         }
                     )
-                    val isPublic = note.visibility == NoteVisibility.PUBLIC
                     DropdownMenuItem(
                         text = { Text("Share note") },
                         leadingIcon = { AppIcon(R.drawable.ic_public) },
-                        trailingIcon = {
-                            if (isPublic) {
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer
-                                ) {
-                                    Text(
-                                        "Public",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        },
                         onClick = {
                             menu = false
                             sharePublicModal = true
@@ -649,7 +672,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
             } else null
         }
         PublicShareSheet(
-            note = note,
+            isPublic = note.visibility == NoteVisibility.PUBLIC,
             publicUrl = publicUrl,
             onDismiss = { sharePublicModal = false },
             onToggle = { enable ->
@@ -826,7 +849,7 @@ private fun EditorLocationChip(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PublicShareSheet(
-    note: Note,
+    isPublic: Boolean,
     publicUrl: String?,
     onDismiss: () -> Unit,
     onToggle: (Boolean) -> Unit,
@@ -834,7 +857,6 @@ private fun PublicShareSheet(
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager
-    val isPublic = note.visibility == NoteVisibility.PUBLIC
     var copied by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
@@ -850,208 +872,79 @@ private fun PublicShareSheet(
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 36.dp)
         ) {
+            Text(
+                "Share note",
+                style = MaterialTheme.typography.titleLarge
+            )
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 4.dp)
+                modifier = Modifier.fillMaxWidth()
             ) {
+                AppIcon(R.drawable.ic_public)
+                Spacer(Modifier.width(16.dp))
                 Text(
-                    "Share note",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    "Public link",
+                    style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f)
                 )
-                if (isPublic) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_public),
-                                contentDescription = "Public note",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                "Public",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                }
-            }
-            if (note.title.isNotBlank()) {
-                Text(
-                    note.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(bottom = 20.dp)
+                Switch(
+                    checked = isPublic,
+                    onCheckedChange = onToggle
                 )
-            } else {
-                Spacer(Modifier.height(16.dp))
             }
 
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                modifier = Modifier.fillMaxWidth()
+            AnimatedVisibility(
+                visible = isPublic,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
             ) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (publicUrl != null) {
                         Surface(
-                            shape = CircleShape,
-                            color = if (isPublic) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.size(44.dp)
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    clipboard?.setPrimaryClip(ClipData.newPlainText("note link", publicUrl))
+                                    copied = true
+                                }
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_public),
-                                    contentDescription = null,
-                                    tint = if (isPublic) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "Public link sharing",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                if (isPublic) "Anyone with the link can view this note" else "Only you can access this note",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Switch(
-                            checked = isPublic,
-                            onCheckedChange = onToggle
-                        )
-                    }
-
-                    AnimatedVisibility(
-                        visible = isPublic,
-                        enter = fadeIn() + expandVertically(),
-                        exit = fadeOut() + shrinkVertically()
-                    ) {
-                        Column(Modifier.padding(top = 16.dp)) {
-                            HorizontalDivider(
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                modifier = Modifier.padding(bottom = 14.dp)
-                            )
-                            if (publicUrl != null) {
-                                OutlinedCard(
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = CardDefaults.outlinedCardColors(
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                                    ),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_public),
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                        Text(
-                                            text = publicUrl,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                }
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            clipboard?.setPrimaryClip(ClipData.newPlainText("note link", publicUrl))
-                                            copied = true
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(if (copied) R.drawable.ic_check else R.drawable.ic_attach),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(if (copied) "Copied!" else "Copy link")
-                                    }
-                                    Button(
-                                        onClick = {
-                                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                                putExtra(Intent.EXTRA_TEXT, publicUrl)
-                                                type = "text/plain"
-                                            }
-                                            context.startActivity(Intent.createChooser(sendIntent, "Share note link"))
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_public),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Share link")
-                                    }
-                                }
-                            } else {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                            ) {
                                 Text(
-                                    "Link will be available once the note finishes syncing to your server.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = publicUrl,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (copied) "Copied!" else "Copy",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = if (copied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                        }
+
+                        Button(
+                            onClick = {
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    putExtra(Intent.EXTRA_TEXT, publicUrl)
+                                    type = "text/plain"
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share link"))
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Share via…")
                         }
                     }
                 }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = {
-                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                        putExtra(Intent.EXTRA_TEXT, note.content)
-                        type = "text/plain"
-                    }
-                    context.startActivity(Intent.createChooser(sendIntent, "Share note text"))
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_file),
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Share note content as text")
             }
         }
     }

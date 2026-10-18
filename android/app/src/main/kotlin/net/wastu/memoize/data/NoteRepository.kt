@@ -142,6 +142,13 @@ class NoteRepository private constructor(
         dao.put(saved); queue(saved); saved.note()
     }
 
+    suspend fun togglePinned(id: String): Note = transaction {
+        val current = requireNote(id)
+        val target = !current.pinned
+        val saved = current.copy(pinned = target, revision = current.revision + 1, updatedAt = clock())
+        dao.put(saved); queue(saved); saved.note()
+    }
+
     suspend fun setLocation(id: String, location: NoteLocation?): Note = transaction {
         val current = requireNote(id)
         if (SnapshotCodec.location(current.locationJson) == location) return@transaction current.note()

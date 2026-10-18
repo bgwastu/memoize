@@ -120,6 +120,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clip
 import net.wastu.memoize.data.Note
+import net.wastu.memoize.data.EditSnapshot
 import net.wastu.memoize.data.NoteAttachment
 import net.wastu.memoize.data.NoteRepository
 import java.time.Instant
@@ -234,10 +235,22 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
         if (consumedRequest == request.identity) return@LaunchedEffect
         consumedRequest = request.identity
         val requestedNoteId = request.noteId
+        val requestedTag = request.tag
         try {
             if (request.create) {
                 selecting = false; selection = emptyList()
-                val draft = notes.create()
+                val draft = if (!requestedTag.isNullOrBlank()) {
+                    val created = notes.create()
+                    val initialContent = "#$requestedTag "
+                    notes.saveEdit(created.id, EditSnapshot(
+                        content = initialContent,
+                        selectionStart = initialContent.length,
+                        selectionEnd = initialContent.length,
+                        scroll = 0
+                    ))
+                } else {
+                    notes.create()
+                }
                 searchState.animateToCollapsed()
                 selectedId = draft.id
                 editorKey = draft.id
@@ -252,6 +265,13 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                     focusEditor = false
                     settings = false
                 } else snackbar.showSnackbar("This note is unavailable in the active account")
+            } else if (!requestedTag.isNullOrBlank()) {
+                selecting = false; selection = emptyList()
+                selectedId = null
+                tag = requestedTag
+                searchState.animateToCollapsed()
+                focusEditor = false
+                settings = false
             }
         } catch (exception: Exception) {
             if (exception is kotlinx.coroutines.CancellationException) throw exception

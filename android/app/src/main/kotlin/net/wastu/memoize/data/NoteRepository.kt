@@ -224,7 +224,10 @@ class NoteRepository private constructor(
 
     suspend fun discardBlankDraft(id: String): Boolean = transaction {
         val current = dao.get(account, id) ?: return@transaction false
-        if (!current.note().isBlankDraft) return@transaction false
+        val note = current.note()
+        val isBlankOrSingleTagOnly = note.remoteName == null && note.attachments.isEmpty() && note.location == null &&
+            (note.content.isBlank() || (note.tags.size == 1 && note.content.trim() == "#${note.tags.first()}"))
+        if (!isBlankOrSingleTagOnly) return@transaction false
         dao.delete(account, id); dao.deletePending(account, id); true
     }
 

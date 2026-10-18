@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import net.wastu.memoize.ui.MemoizeApp
 import net.wastu.memoize.ui.MemoizeTheme
 
-data class OpenRequest(val noteId: String? = null, val create: Boolean = false, val identity: Long = System.nanoTime())
+data class OpenRequest(val noteId: String? = null, val create: Boolean = false, val tag: String? = null, val identity: Long = System.nanoTime())
 
 class MainActivity : ComponentActivity() {
     private val requests = MutableStateFlow(OpenRequest())
@@ -40,14 +40,25 @@ class MainActivity : ComponentActivity() {
         requests.value = request(intent)
     }
 
-    private fun request(intent: Intent): OpenRequest = OpenRequest(
-        noteId = intent.getStringExtra(EXTRA_NOTE_ID),
-        create = intent.action == ACTION_CREATE_NOTE || intent.getBooleanExtra(EXTRA_CREATE_NOTE, false),
-    )
+    private fun request(intent: Intent): OpenRequest {
+        val data = intent.data
+        val tagFromData = if (data?.scheme == "memoize" && (data.authority == "tag" || data.authority == "create")) {
+            data.pathSegments.firstOrNull()
+        } else null
+        val noteIdFromData = if (data?.scheme == "memoize" && data.authority == "note") {
+            data.pathSegments.firstOrNull()
+        } else null
+        return OpenRequest(
+            noteId = intent.getStringExtra(EXTRA_NOTE_ID) ?: noteIdFromData,
+            create = intent.action == ACTION_CREATE_NOTE || intent.getBooleanExtra(EXTRA_CREATE_NOTE, false),
+            tag = intent.getStringExtra(EXTRA_TAG) ?: tagFromData,
+        )
+    }
 
     companion object {
         const val ACTION_CREATE_NOTE = "net.wastu.memoize.CREATE_NOTE"
         const val EXTRA_NOTE_ID = "note_id"
         const val EXTRA_CREATE_NOTE = "create_note"
+        const val EXTRA_TAG = "tag"
     }
 }

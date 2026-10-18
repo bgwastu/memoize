@@ -84,6 +84,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -165,8 +166,16 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
         preferredColumns = count
         savePreferredColumns(context, count)
     }
-    var gridCapacity by remember { mutableIntStateOf(1) }
-    var displayedColumns by remember { mutableIntStateOf(1) }
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val initialCapacity = remember(configuration.screenWidthDp, density.fontScale) {
+        noteGridCapacity(configuration.screenWidthDp.toFloat(), density.fontScale)
+    }
+    val initialColumns = remember(preferredColumns, configuration.screenWidthDp, density.fontScale) {
+        noteGridColumns(preferredColumns, configuration.screenWidthDp.toFloat(), density.fontScale)
+    }
+    var gridCapacity by remember { mutableIntStateOf(initialCapacity) }
+    var displayedColumns by remember { mutableIntStateOf(initialColumns) }
     val listState = rememberLazyStaggeredGridState()
     val searchListState = rememberLazyStaggeredGridState()
     var expandedCreateButton by remember { mutableStateOf(true) }

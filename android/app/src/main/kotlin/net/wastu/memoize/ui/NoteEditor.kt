@@ -123,6 +123,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
 import net.wastu.memoize.R
 import net.wastu.memoize.data.EditSnapshot
 import net.wastu.memoize.data.LiteralSearch
@@ -142,7 +143,8 @@ fun NoteEditor(graph: AppGraph, notes: NoteRepository, id: String, query: String
     // missing row must never close the new recovered editor before that row is loaded.
     val matching = observed?.takeIf { it.account == notes.account && it.id == id }
     val note = matching?.note
-    var lastCommitted by remember(notes, sessionKey) { mutableStateOf<Note?>(null) }
+    val initial = remember(notes.account, sessionKey) { runBlocking { notes.get(id) } }
+    var lastCommitted by remember(notes, sessionKey) { mutableStateOf<Note?>(initial) }
     LaunchedEffect(note) { note?.let { lastCommitted = it } }
     val current = note ?: lastCommitted
     val missing = matching != null && note == null

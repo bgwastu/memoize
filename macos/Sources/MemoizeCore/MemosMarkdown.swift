@@ -139,4 +139,41 @@ enum MemosMarkdown {
         }
         if cursor < NSMaxRange(range) { result.append(NSRange(location:cursor,length:NSMaxRange(range) - cursor)) }; return result
     }
+    static func writtenLinks(_ text: String, absoluteOffset: Int, fullSource: NSString) -> [(url: String, range: NSRange)] {
+        let ns = text as NSString; let whole = NSRange(location:0,length:ns.length)
+        var output: [(url: String, range: NSRange)] = []
+        for match in writtenURL.matches(in:text,range:whole) {
+            let absolute = absoluteOffset + match.range.location
+            let boundary: Bool
+            if absolute == 0 { boundary = true }
+            else if absolute == 1 && fullSource.character(at:0) == 0xFEFF { boundary = true }
+            else { boundary = [32,9,10,11,12,13,42,95,126,40].contains(fullSource.character(at:absolute - 1)) }
+            guard boundary else { continue }
+            var label = ns.substring(with:match.range)
+            let hostStart = label.hasPrefix("https://") ? 8 : label.hasPrefix("http://") ? 7 : 4
+            let domain = label.dropFirst(hostStart).unicodeScalars.prefix { CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0) || "_.-".unicodeScalars.contains($0) }
+            let parts = String(String.UnicodeScalarView(domain)).split(separator:".",omittingEmptySubsequences:false)
+            guard parts.count >= 2 && !parts[parts.count - 1].contains("_") && !parts[parts.count - 2].contains("_") else { continue }
+            var trimmedLen = label.utf16.count
+            let trailing = CharacterSet(charactersIn:".,?!;:\"'")
+            while trimmedLen > 0 {
+                let lastChar = (label as NSString).substring(with:NSRange(location:trimmedLen - 1,length:1))
+                if let scalar = lastChar.unicodeScalars.first, trailing.contains(scalar) {
+                    trimmedLen -= 1
+                    label = (label as NSString).substring(to:trimmedLen)
+                } else if lastChar == ")" {
+                    let openCount = label.filter { $0 == "(" }.count
+                    let closeCount = label.filter { $0 == ")" }.count
+                    if closeCount > openCount {
+                        trimmedLen -= 1
+                        label = (label as NSString).substring(to:trimmedLen)
+                    } else { break }
+                } else { break }
+            }
+            guard trimmedLen > 0 else { continue }
+            let dest = label.hasPrefix("www.") ? "https://" + label : label
+            output.append((url:dest,range:NSRange(location:absolute,length:trimmedLen)))
+        }
+        return output
+    }
 }

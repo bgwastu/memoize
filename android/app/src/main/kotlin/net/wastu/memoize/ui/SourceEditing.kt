@@ -6,7 +6,7 @@ import net.wastu.memoize.data.TextMatch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-enum class SourceStyle { HEADING, BOLD, ITALIC, CODE, TAG, SYNTAX, SEARCH }
+enum class SourceStyle { HEADING, BOLD, ITALIC, CODE, TAG, LINK, SYNTAX, SEARCH }
 data class StyledRange(val range: TextMatch, val style: SourceStyle)
 data class ListParagraph(val range: TextMatch, val contentStart: Int)
 data class DisplayStyles(val input: CharSequence, val query: String, val ranges: List<StyledRange>,
@@ -22,6 +22,73 @@ private val tag = Regex("#[\\p{L}\\p{N}_+/-]+")
 private val listPrefix = Regex("^([ \\t]*)([-+*]|[0-9]{1,9}[.)])([ \\t]+)(?:\\[([ xX])\\](?:[ \\t]+|$))?")
 private val fencePrefix = Regex("^[ \\t]*(?:>[ \\t]*)?(?:[-+*][ \\t]+|[0-9]{1,9}[.)][ \\t]+)?(`{3,}|~{3,})(.*)$")
 private val thematicBreak = Regex("^[ \\t]{0,3}(?:\\*(?:[ \\t]*\\*){2,}|-(?:[ \\t]*-){2,}|_(?:[ \\t]*_){2,})[ \\t]*$")
+private val markdownLink = Regex("\\[([^\\]\\n]+)\\]\\(([^)\\s\\n]+)\\)")
+private val autolink = Regex("<((?:https?://|mailto:)[^>\\s\\n]+)>")
+private val writtenUrl = Regex("(?:https?://|www\\.)[\\p{L}\\p{N}_.-]+[^<\\x09-\\x0d\\p{Z}]*")
+private val trailingUrlPunctuation = charArrayOf('.', ',', '?', '!', ';', ':', '"', '\'')
+
+internal fun resolveLinkUrl(linkText: String): String {
+    val trimmed = linkText.trim()
+    val raw = when {
+        trimmed.startsWith("[") && trimmed.contains("](") && trimmed.endsWith(")") ->
+            trimmed.substringAfter("](").dropLast(1).trim()
+        trimmed.startsWith("<") && trimmed.endsWith(">") ->
+            trimmed.drop(1).dropLast(1).trim()
+        else -> trimmed
+    }
+    return if (raw.startsWith("www.", ignoreCase = true)) "https://$raw" else raw
+}
+
+internal fun matchWrittenUrls(source: String): List<TextMatch> {
+    val result = ArrayList<TextMatch>()
+    for (match in writtenUrl.findAll(source)) {
+        val start = match.range.first
+        val boundary = if (start == 0) true
+        else if (start == 1 && source[0] == '\uFEFF') true
+        else source[start - 1] in " \t\n\r*_-~("
+        if (!boundary) continue
+
+        var label = match.value
+        val hostStart = when {
+            label.startsWith("https://", ignoreCase = true) -> 8
+            label.startsWith("http://", ignoreCase = true) -> 7
+            else -> 4
+        }
+        val domain = label.drop(hostStart).takeWhile { it.isLetterOrDigit() || it in "_.-" }
+        val parts = domain.split('.')
+        if (parts.size < 2 || parts[parts.size - 1].contains('_') || parts[parts.size - 2].contains('_')) continue
+
+        var trimmedLen = label.length
+        while (trimmedLen > 0) {
+            val last = label[trimmedLen - 1]
+            if (last in trailingUrlPunctuation) {
+                trimmedLen--
+                label = label.substring(0, trimmedLen)
+            } else if (last == ')') {
+                val open = label.count { it == '(' }
+                val close = label.count { it == ')' }
+                if (close > open) {
+                    trimmedLen--
+                    label = label.substring(0, trimmedLen)
+                } else break
+            } else break
+        }
+        if (trimmedLen > 0) {
+            result += TextMatch(start, start + trimmedLen)
+        }
+    }
+    return result
+}
+
+internal fun findLinkAt(display: DisplayStyles, offset: Int): Pair<String, TextMatch>? {
+    val styled = display.ranges.firstOrNull { it.style == SourceStyle.LINK && offset in it.range.start until it.range.end }
+        ?: return null
+    val raw = display.input.subSequence(
+        styled.range.start.coerceIn(0, display.input.length),
+        styled.range.end.coerceIn(0, display.input.length)
+    ).toString()
+    return resolveLinkUrl(raw) to styled.range
+}
 
 /** Bound display annotations around the viewport; source and full-body repository search stay exact. */
 suspend fun sourceStyles(input: CharSequence, query: String, anchor: Int = 0, visibleEnd: Int = anchor + 1_024): DisplayStyles {
@@ -40,8 +107,27 @@ suspend fun sourceStyles(input: CharSequence, query: String, anchor: Int = 0, vi
         if (from < to && codeMatches.none { from >= it.range.first && to <= it.range.last + 1 })
             markers += StyledRange(TextMatch(start + from, start + to), SourceStyle.SYNTAX)
     }
+    val markdownLinkMatches = markdownLink.findAll(source).filter { m ->
+        codeMatches.none { m.range.first >= it.range.first && m.range.last <= it.range.last }
+    }.toList()
+    val autolinkMatches = autolink.findAll(source).filter { m ->
+        codeMatches.none { m.range.first >= it.range.first && m.range.last <= it.range.last }
+    }.toList()
+    val bareUrlMatches = matchWrittenUrls(source).filter { u ->
+        codeMatches.none { u.start >= it.range.first && u.end <= it.range.last + 1 } &&
+        markdownLinkMatches.none { u.start >= it.range.first && u.end <= it.range.last + 1 } &&
+        autolinkMatches.none { u.start >= it.range.first && u.end <= it.range.last + 1 }
+    }
     for ((expression, style) in listOf(heading to SourceStyle.HEADING, bold to SourceStyle.BOLD, italic to SourceStyle.ITALIC, code to SourceStyle.CODE, tag to SourceStyle.TAG)) {
-        val matches = if (style == SourceStyle.CODE) codeMatches.asSequence() else expression.findAll(source)
+        val matches = when (style) {
+            SourceStyle.CODE -> codeMatches.asSequence()
+            SourceStyle.TAG -> expression.findAll(source).filter { t ->
+                codeMatches.none { t.range.first >= it.range.first && t.range.last <= it.range.last } &&
+                markdownLinkMatches.none { t.range.first >= it.range.first && t.range.last <= it.range.last } &&
+                bareUrlMatches.none { t.range.first >= it.start && t.range.last <= it.end }
+            }
+            else -> expression.findAll(source)
+        }
         matches.forEach { match ->
             currentCoroutineContext().ensureActive()
             val from = match.range.first
@@ -61,6 +147,26 @@ suspend fun sourceStyles(input: CharSequence, query: String, anchor: Int = 0, vi
                 else -> Unit
             }
         }
+    }
+    markdownLinkMatches.forEach { match ->
+        val from = match.range.first
+        val to = match.range.last + 1
+        ranges += StyledRange(TextMatch(start + from, start + to), SourceStyle.LINK)
+        marker(from, from + 1)
+        val textGroup = match.groups[1]!!
+        val urlGroup = match.groups[2]!!
+        marker(textGroup.range.last + 1, urlGroup.range.first)
+        marker(to - 1, to)
+    }
+    autolinkMatches.forEach { match ->
+        val from = match.range.first
+        val to = match.range.last + 1
+        ranges += StyledRange(TextMatch(start + from, start + to), SourceStyle.LINK)
+        marker(from, from + 1)
+        marker(to - 1, to)
+    }
+    bareUrlMatches.forEach { match ->
+        ranges += StyledRange(TextMatch(start + match.start, start + match.end), SourceStyle.LINK)
     }
     // Reset marker emphasis after content styles; actual search highlighting still wins.
     ranges += markers

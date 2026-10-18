@@ -71,4 +71,25 @@ class MarkdownPreviewTest {
             assertEquals("Wrapped content aligns with its own marker", contentLeft, layout.getPrimaryHorizontal(layout.getLineStart(first + 1)), 1f)
         }
     }
+
+    @Test fun linksAndUrlsAreHighlightedAsLinks() = runBlocking {
+        val source = "See [site](https://example.com/page) or <https://apple.com> or visit https://openai.com/blog. Also www.memoize.net/docs, but `https://code.internal` is code."
+        val display = sourceStyles(source, "", 0, source.length)
+        val linkRanges = display.ranges.filter { it.style == SourceStyle.LINK }
+        val linkTexts = linkRanges.map { source.substring(it.range.start, it.range.end) }
+        assertTrue("Contains markdown link", linkTexts.any { it == "[site](https://example.com/page)" })
+        assertTrue("Contains autolink", linkTexts.any { it == "<https://apple.com>" })
+        assertTrue("Contains bare url", linkTexts.any { it == "https://openai.com/blog" })
+        assertTrue("Contains www url", linkTexts.any { it == "www.memoize.net/docs" })
+        assertTrue("Excludes inline code", linkTexts.none { it.contains("code.internal") })
+
+        val foundMarkdown = findLinkAt(display, source.indexOf("site"))
+        assertEquals("https://example.com/page", foundMarkdown?.first)
+
+        val foundBare = findLinkAt(display, source.indexOf("openai"))
+        assertEquals("https://openai.com/blog", foundBare?.first)
+
+        val foundWww = findLinkAt(display, source.indexOf("memoize"))
+        assertEquals("https://www.memoize.net/docs", foundWww?.first)
+    }
 }

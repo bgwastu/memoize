@@ -27,6 +27,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.wastu.memoize.data.TextMatch
@@ -61,6 +62,49 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
         view.typeface = sourceTypeface()
         view.setTextColor(color.toArgb())
         view.text = nativeMarkdownPreview(display, colors, matches, view.paint)
+        var downX = 0f
+        var downY = 0f
+        var downTime = 0L
+        view.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    downTime = event.eventTime
+                    false
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val slop = android.view.ViewConfiguration.get(view.context).scaledTouchSlop
+                    if (kotlin.math.abs(event.x - downX) <= slop && kotlin.math.abs(event.y - downY) <= slop &&
+                        event.eventTime - downTime < android.view.ViewConfiguration.getLongPressTimeout()
+                    ) {
+                        val layout = view.layout
+                        if (layout != null) {
+                            val y = event.y.toInt()
+                            if (y in 0 until layout.height) {
+                                val line = layout.getLineForVertical(y)
+                                val x = event.x
+                                if (x >= layout.getLineLeft(line) && x <= layout.getLineRight(line)) {
+                                    val offset = layout.getOffsetForHorizontal(line, x)
+                                    val link = findLinkAt(display, offset)
+                                    if (link != null) {
+                                        try {
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link.first)).apply {
+                                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            view.context.startActivity(intent)
+                                            return@setOnTouchListener true
+                                        } catch (_: Exception) {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    false
+                }
+                else -> false
+            }
+        }
     })
 }
 
@@ -119,6 +163,7 @@ internal fun markdownPreview(display: DisplayStyles, colors: ColorScheme, matche
                 SourceStyle.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
                 SourceStyle.CODE -> SpanStyle(color = colors.secondary, background = colors.surfaceContainerHigh)
                 SourceStyle.TAG -> SpanStyle(color = colors.tertiary)
+                SourceStyle.LINK -> SpanStyle(color = colors.primary, textDecoration = TextDecoration.Underline)
                 SourceStyle.SYNTAX -> SpanStyle(color = colors.sourceSyntaxColor(), fontWeight = FontWeight.Normal, fontStyle = FontStyle.Normal)
                 SourceStyle.SEARCH -> search
             }

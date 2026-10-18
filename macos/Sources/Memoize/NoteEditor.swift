@@ -223,7 +223,8 @@ final class SourceTextView: NSTextView {
         textView.isRichText = false; textView.importsGraphics = false; textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = false; textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false; textView.isAutomaticLinkDetectionEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = true
+        textView.isAutomaticSpellingCorrectionEnabled = true
         textView.font = baseFont; textView.textColor = .labelColor; textView.backgroundColor = .textBackgroundColor
         let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 3
         textView.defaultParagraphStyle = paragraph; textView.typingAttributes = [.font:baseFont,.paragraphStyle:paragraph,.foregroundColor:NSColor.labelColor]
@@ -361,7 +362,17 @@ final class SourceTextView: NSTextView {
         }
     }
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-        if let value = link as? String, value.hasPrefix("memoize-tag:") { onTag?(String(value.dropFirst(12))); return true }
+        if let value = link as? String {
+            if value.hasPrefix("memoize-tag:") { onTag?(String(value.dropFirst(12))); return true }
+            let normalized = value.hasPrefix("www.") ? "https://" + value : value
+            if let url = URL(string: normalized), let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme) {
+                NSWorkspace.shared.open(url)
+                return true
+            }
+        } else if let url = link as? URL {
+            NSWorkspace.shared.open(url)
+            return true
+        }
         return false
     }
     private func highlight() {
@@ -382,15 +393,22 @@ final class SourceTextView: NSTextView {
     }
     private func apply(_ result: MarkdownAnalysis) {
         // Links need AppKit hit testing. Finish storage edits before applying rendering colors.
-        let hadLinks = analysis.map { !$0.tags.isEmpty } ?? false
+        let hadLinks = analysis.map { !$0.tags.isEmpty || !$0.links.isEmpty } ?? false
         let hadLists = analysis.map { !$0.listParagraphs.isEmpty } ?? false
-        if hadLinks || !result.tags.isEmpty || hadLists || !result.listParagraphs.isEmpty, let storage = textView.textStorage {
+        if hadLinks || !result.tags.isEmpty || !result.links.isEmpty || hadLists || !result.listParagraphs.isEmpty, let storage = textView.textStorage {
             let undo = textView.undoManager; let registered = undo?.isUndoRegistrationEnabled == true
             if registered { undo?.disableUndoRegistration() }
             storage.beginEditing()
             let fullRange = NSRange(location:0,length:storage.length)
             storage.removeAttribute(.link,range:fullRange)
+            storage.removeAttribute(.underlineStyle,range:fullRange)
+            storage.removeAttribute(.toolTip,range:fullRange)
             for tag in result.tags { storage.addAttribute(.link,value:"memoize-tag:" + tag.value,range:tag.range) }
+            for link in result.links {
+                storage.addAttribute(.link,value:link.destination,range:link.range)
+                storage.addAttribute(.underlineStyle,value:NSUnderlineStyle.single.rawValue,range:link.range)
+                storage.addAttribute(.toolTip,value:"⌘-click to open " + link.destination,range:link.range)
+            }
             let paragraph = textView.defaultParagraphStyle ?? NSParagraphStyle.default
             storage.addAttribute(.paragraphStyle,value:paragraph,range:fullRange)
             for list in result.listParagraphs {

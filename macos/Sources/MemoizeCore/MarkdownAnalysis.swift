@@ -89,13 +89,23 @@ public struct MarkdownAnalysis: Sendable {
                 if let style { highlights.append(.init(range:r,style:style)) }
                 if let code = node as? CodeBlock { highlights += CodeHighlights.parse(ns.substring(with:r),language:code.language ?? "",offset:r.location) }
                 if let image = node as? Image, let destination = image.source { images.append(.init(destination:destination,range:r)) }
-                if let link = node as? Link, let destination = link.destination { links.append(.init(destination:destination,range:r)) }
-                if node is Markdown.Text && tagsAllowed && ns.range(of:"#",range:r).location != NSNotFound {
-                    let opaque = MemosMarkdown.opaqueRanges(ns.substring(with:r),absoluteOffset:r.location,fullSource:ns).map { NSRange(location:r.location + $0.location,length:$0.length) } + mathBlocks
-                    for literal in MemosMarkdown.subtract(opaque,from:r) {
-                        for match in TagLexer(ns.substring(with:literal)).matches() {
-                            let absolute = NSRange(location:literal.location + match.range.location,length:match.range.length)
-                            tags.append(.init(value:match.value,range:absolute)); highlights.append(.init(range:absolute,style:.tag))
+                if let link = node as? Link, let destination = link.destination {
+                    let dest = destination.hasPrefix("www.") ? "https://" + destination : destination
+                    links.append(.init(destination:dest,range:r))
+                }
+                if node is Markdown.Text && tagsAllowed {
+                    let raw = ns.substring(with:r)
+                    for link in MemosMarkdown.writtenLinks(raw,absoluteOffset:r.location,fullSource:ns) {
+                        links.append(.init(destination:link.url,range:link.range))
+                        highlights.append(.init(range:link.range,style:.link))
+                    }
+                    if ns.range(of:"#",range:r).location != NSNotFound {
+                        let opaque = MemosMarkdown.opaqueRanges(raw,absoluteOffset:r.location,fullSource:ns).map { NSRange(location:r.location + $0.location,length:$0.length) } + mathBlocks
+                        for literal in MemosMarkdown.subtract(opaque,from:r) {
+                            for match in TagLexer(ns.substring(with:literal)).matches() {
+                                let absolute = NSRange(location:literal.location + match.range.location,length:match.range.length)
+                                tags.append(.init(value:match.value,range:absolute)); highlights.append(.init(range:absolute,style:.tag))
+                            }
                         }
                     }
                 }

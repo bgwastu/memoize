@@ -174,6 +174,16 @@ func save(_ store: LocalStore, _ note: Note, _ text: String) async throws -> Not
     for tag in analysis.tags { #expect((source as NSString).substring(with:tag.range).hasPrefix("#")) }
     #expect(analysis.highlights.contains(where:{ if case .keyword = $0.style { true } else { false } }))
 }
+@Test func markdownLinksAndURLs() {
+    let source = "See [site](https://example.com/page) or <https://apple.com> or visit https://openai.com/blog. Also www.memoize.net/docs, but `https://code.internal` is code."
+    let analysis = MarkdownAnalysis.parse(source)
+    let urls = analysis.links.map(\.destination)
+    #expect(urls.contains("https://example.com/page"))
+    #expect(urls.contains("https://apple.com"))
+    #expect(urls.contains("https://openai.com/blog"))
+    #expect(urls.contains("https://www.memoize.net/docs"))
+    #expect(!urls.contains("https://code.internal"))
+}
 @Test func uploadClaimRejectsAChangedOrDiscardedSnapshot() async throws {
     let store = try temporaryStore()
     let original = try await save(store,Note(),"first")

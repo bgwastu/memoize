@@ -18,6 +18,7 @@ import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.StyleSpan
+import android.text.style.UnderlineSpan
 import android.text.style.MetricAffectingSpan
 import android.util.AttributeSet
 import android.util.TypedValue
@@ -153,6 +154,7 @@ internal fun sourceStyleSpans(style: SourceStyle, palette: SourcePalette): List<
     SourceStyle.ITALIC -> listOf(StyleSpan(Typeface.ITALIC))
     SourceStyle.CODE -> listOf(ForegroundColorSpan(palette.secondary), BackgroundColorSpan(palette.codeBackground))
     SourceStyle.TAG -> listOf(ForegroundColorSpan(palette.tertiary))
+    SourceStyle.LINK -> listOf(ForegroundColorSpan(palette.primary), UnderlineSpan())
     SourceStyle.SYNTAX -> listOf(ForegroundColorSpan(palette.syntax), SourceSyntaxSpan())
     SourceStyle.SEARCH -> listOf(ForegroundColorSpan(palette.searchText), BackgroundColorSpan(palette.searchBackground))
 }
@@ -228,9 +230,15 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     private var restoreWrappedLayout = false
     private var boundsWidthBeforeFallback: Boolean? = null
     private val spanObserver = object : SpanWatcher, NoCopySpan {
-        override fun onSpanAdded(text: Spannable?, what: Any?, start: Int, end: Int) { scheduleSettle() }
-        override fun onSpanRemoved(text: Spannable?, what: Any?, start: Int, end: Int) { scheduleSettle() }
-        override fun onSpanChanged(text: Spannable?, what: Any?, oldStart: Int, oldEnd: Int, newStart: Int, newEnd: Int) { scheduleSettle() }
+        override fun onSpanAdded(text: Spannable?, what: Any?, start: Int, end: Int) {
+            if (what !is android.text.style.SuggestionSpan) scheduleSettle()
+        }
+        override fun onSpanRemoved(text: Spannable?, what: Any?, start: Int, end: Int) {
+            if (what !is android.text.style.SuggestionSpan) scheduleSettle()
+        }
+        override fun onSpanChanged(text: Spannable?, what: Any?, oldStart: Int, oldEnd: Int, newStart: Int, newEnd: Int) {
+            if (what !is android.text.style.SuggestionSpan) scheduleSettle()
+        }
     }
     private var settlementPosted = false
     private fun scheduleSettle() {
@@ -253,7 +261,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
         // to the logical editor and repository, never an EditText SavedState parcel.
         isSaveEnabled = false
         inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or android.text.InputType.TYPE_TEXT_FLAG_AUTO_CORRECT
         gravity = android.view.Gravity.TOP or android.view.Gravity.START
         setBackgroundColor(Color.TRANSPARENT)
         setStyleShortcutsEnabled(false)
@@ -674,12 +682,16 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
 
     private data class ListDrag(val source: String, val offset: Int, val x: Float, val y: Float, val time: Long, var claimed: Boolean = false)
     private var drag: ListDrag? = null
+    private var tapDownX = 0f
+    private var tapDownY = 0f
+    private var tapDownTime = 0L
     override fun performClick(): Boolean = super.performClick()
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val config = ViewConfiguration.get(context)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 drag = null
+                tapDownX = event.x; tapDownY = event.y; tapDownTime = event.eventTime
                 val result = layout
                 if (canCommand() && range().collapsed && result != null && event.x >= 8 * resources.displayMetrics.density) {
                     val y = (event.y - totalPaddingTop + scrollY).toInt()
@@ -720,12 +732,40 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                     }
                     return true
                 }
+                if (abs(event.x - tapDownX) <= config.scaledTouchSlop && abs(event.y - tapDownY) <= config.scaledTouchSlop &&
+                    event.eventTime - tapDownTime < ViewConfiguration.getLongPressTimeout()
+                ) {
+                    val result = layout
+                    if (result != null) {
+                        val y = (event.y - totalPaddingTop + scrollY).toInt()
+                        if (y in 0 until result.height) {
+                            val line = result.getLineForVertical(y)
+                            val x = event.x - totalPaddingLeft + scrollX
+                            if (x >= result.getLineLeft(line) && x <= result.getLineRight(line)) {
+                                val offset = result.getOffsetForHorizontal(line, x)
+                                val link = styled?.first?.let { findLinkAt(it, offset) }
+                                if (link != null) {
+                                    openLink(link.first)
+                                    return true
+                                }
+                            }
+                        }
+                    }
+                }
             }
             MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> { drag = null; parent?.requestDisallowInterceptTouchEvent(false) }
         }
         val handled = super.onTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return handled
+    }
+    private fun openLink(url: String) {
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {}
     }
     private companion object {
         const val FORMAT_ID = 0x010f0010

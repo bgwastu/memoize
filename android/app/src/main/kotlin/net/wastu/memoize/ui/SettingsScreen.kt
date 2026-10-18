@@ -32,6 +32,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedSecureTextField
@@ -83,8 +84,12 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
     val context = LocalContext.current
     var connecting by remember { mutableStateOf(false) }
     var connectionError by remember { mutableStateOf<String?>(null) }
-    var updating by remember { mutableStateOf(false) }
-    var updateError by remember { mutableStateOf<String?>(null) }
+    val updateStatus by (graph.updates?.status ?: remember { MutableStateFlow(UpdateStatus.Idle) }).collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) {
+        if (graph.updates != null && graph.updates?.status?.value is UpdateStatus.Idle) {
+            runCatching { graph.updates?.check(context) }
+        }
+    }
     var showRecovery by rememberSaveable { mutableStateOf(false) }
     var editingConnection by remember { mutableStateOf(false) }
     LaunchedEffect(status.needsAuthentication) { if (status.needsAuthentication) editingConnection = true }
@@ -296,66 +301,100 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column {
+                        val currentStatus = updateStatus
                         ListItem(
                             headlineContent = {
                                 Text(
-                                    if (updating) "Checking for updates…" else "Check for updates",
+                                    when (currentStatus) {
+                                        is UpdateStatus.Checking -> "Checking for updates…"
+                                        is UpdateStatus.Available -> "Update available: Memoize ${currentStatus.update.versionName}"
+                                        is UpdateStatus.Downloading -> "Downloading update: ${(currentStatus.progress * 100).toInt()}%"
+                                        is UpdateStatus.ReadyToInstall -> "Memoize ${currentStatus.update.versionName} ready"
+                                        else -> "Check for updates"
+                                    },
                                     style = MaterialTheme.typography.bodyLarge
                                 )
                             },
                             supportingContent = {
-                                Text(
-                                    "Check for new releases on GitHub",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                when (currentStatus) {
+                                    is UpdateStatus.Available -> Text(
+                                        "Tap to download and install update in-app",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    is UpdateStatus.Downloading -> {
+                                        LinearProgressIndicator(
+                                            progress = { currentStatus.progress },
+                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                                        )
+                                    }
+                                    is UpdateStatus.ReadyToInstall -> Text(
+                                        "Downloaded. Tap to install now.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    is UpdateStatus.UpToDate -> Text(
+                                        currentStatus.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    is UpdateStatus.Error -> Text(
+                                        currentStatus.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    else -> Text(
+                                        "Check for new releases on GitHub",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             },
                             leadingContent = { AppIcon(R.drawable.ic_update) },
                             trailingContent = {
-                                if (updating) {
-                                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                                } else {
-                                    AppIcon(R.drawable.ic_chevron_right)
+                                when (currentStatus) {
+                                    is UpdateStatus.Checking, is UpdateStatus.Downloading -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    is UpdateStatus.ReadyToInstall -> Button(
+                                        onClick = { graph.updates?.install(context) }
+                                    ) { Text("Install") }
+                                    is UpdateStatus.Available -> Button(
+                                        onClick = {
+                                            scope.launch {
+                                                try { graph.updates?.downloadAndInstall(context) }
+                                                catch (e: Exception) {
+                                                    if (e is CancellationException) throw e
+                                                    snackbar.showSnackbar(e.message ?: "Failed to download update")
+                                                }
+                                            }
+                                        }
+                                    ) { Text("Update") }
+                                    else -> AppIcon(R.drawable.ic_chevron_right)
                                 }
                             },
                             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = !updating && graph.updates != null, role = Role.Button) {
-                                    updating = true
-                                    updateError = null
+                                .clickable(
+                                    enabled = currentStatus !is UpdateStatus.Checking && currentStatus !is UpdateStatus.Downloading && graph.updates != null,
+                                    role = Role.Button
+                                ) {
                                     scope.launch {
                                         try {
-                                            snackbar.showSnackbar(requireNotNull(graph.updates) { "Updates are unavailable" }.check(context))
+                                            when (currentStatus) {
+                                                is UpdateStatus.Available -> graph.updates?.downloadAndInstall(context)
+                                                is UpdateStatus.ReadyToInstall -> graph.updates?.install(context)
+                                                else -> {
+                                                    val result = graph.updates?.check(context)
+                                                    if (result != null) snackbar.showSnackbar(result)
+                                                }
+                                            }
                                         } catch (exception: Exception) {
                                             if (exception is CancellationException) throw exception
-                                            updateError = exception.message ?: "Unable to check for updates"
-                                        } finally {
-                                            updating = false
+                                            snackbar.showSnackbar(exception.message ?: "Update check failed")
                                         }
                                     }
                                 }
                         )
-
-                        updateError?.let { err ->
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.errorContainer,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = err,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier
-                                        .padding(10.dp)
-                                        .semantics { liveRegion = LiveRegionMode.Polite }
-                                )
-                            }
-                        }
-
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)

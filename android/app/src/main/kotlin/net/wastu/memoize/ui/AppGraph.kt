@@ -12,6 +12,8 @@ import net.wastu.memoize.data.NoteRepository
 import net.wastu.memoize.attachments.MemoizeAttachmentService
 import net.wastu.memoize.sync.MemoizeConnectionService
 import net.wastu.memoize.updates.GitHubUpdateService
+import net.wastu.memoize.updates.AndroidUpdate
+import java.io.File
 
 data class ConnectionSettings(val server: String = "", val account: String = "", val connected: Boolean = false)
 data class SyncStatus(val message: String = "On this device", val busy: Boolean = false, val needsAuthentication: Boolean = false)
@@ -29,8 +31,21 @@ interface AttachmentService {
     suspend fun open(context: Context, repository: NoteRepository, attachment: NoteAttachment)
 }
 
+sealed interface UpdateStatus {
+    object Idle : UpdateStatus
+    object Checking : UpdateStatus
+    data class Available(val update: AndroidUpdate) : UpdateStatus
+    data class Downloading(val update: AndroidUpdate, val progress: Float) : UpdateStatus
+    data class ReadyToInstall(val update: AndroidUpdate, val file: File) : UpdateStatus
+    data class UpToDate(val message: String = "Memoize is up to date.") : UpdateStatus
+    data class Error(val message: String) : UpdateStatus
+}
+
 interface UpdateService {
+    val status: StateFlow<UpdateStatus>
     suspend fun check(context: Context): String
+    suspend fun downloadAndInstall(context: Context)
+    fun install(context: Context)
 }
 
 /** Process-wide dependencies. Adapters install themselves without exposing transport/SQL to UI. */

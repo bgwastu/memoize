@@ -3,4 +3,5 @@
     <files-path name="originals" path="accounts/" />
     <cache-path name="cached" path="accounts/" />
     <cache-path name="shared_notes" path="shared-notes/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

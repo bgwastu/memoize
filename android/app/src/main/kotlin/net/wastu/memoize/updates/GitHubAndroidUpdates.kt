@@ -18,47 +18,58 @@ interface PublicReleaseApi {
     suspend fun get(address: String): ReleaseDocument
 }
 
-data class AndroidUpdate(val versionName: String, val versionCode: Int, val apkAddress: String)
+data class AndroidUpdate(val versionName: String, val versionCode: Int, val apkAddress: String, val sha256: String = "")
 
 class GitHubAndroidUpdates(private val api: PublicReleaseApi = UrlConnectionReleaseApi()) {
     suspend fun find(installedCode: Long, certificate: String): AndroidUpdate? {
-        val releases = mutableListOf<kotlinx.serialization.json.JsonObject>()
         val visited = mutableSetOf<String>()
         var page: String? = start
-        while (page != null) {
+        var newest: AndroidUpdate? = null
+        var reachedCurrentOrOlder = false
+
+        while (page != null && !reachedCurrentOrOlder) {
             val address = page
             require(validPage(address) && visited.add(address)) { "Invalid or repeated GitHub release page" }
             val document = api.get(address)
-            releases += Json.parseToJsonElement(document.body).jsonArray.map { it.jsonObject }
+            val releases = Json.parseToJsonElement(document.body).jsonArray.map { it.jsonObject }
             page = document.next
-        }
-        var newest: AndroidUpdate? = null
-        for (release in releases) {
-            val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: continue
-            if (!tag.matches(Regex("android/v[0-9]+\\.[0-9]+\\.[0-9]+")) ||
-                release["draft"]?.jsonPrimitive?.booleanOrNull != false ||
-                release["prerelease"]?.jsonPrimitive?.booleanOrNull != false) continue
-            val name = tag.removePrefix("android/v")
-            val assets = release["assets"]?.jsonArray?.associate { asset ->
-                val fields = asset.jsonObject
-                fields["name"]!!.jsonPrimitive.content to fields["browser_download_url"]!!.jsonPrimitive.content
-            } ?: continue
-            val filename = "Memoize-$name.apk"
-            val apk = assets[filename] ?: continue
-            val manifest = assets["release.json"] ?: continue
-            require(validAsset(apk, tag, filename) && validAsset(manifest, tag, "release.json")) { "Invalid Android release asset origin" }
-            val metadata = Json.parseToJsonElement(api.get(manifest).body).jsonObject
-            val code = metadata["version_code"]?.jsonPrimitive?.intOrNull ?: continue
-            if (metadata["schema"]?.jsonPrimitive?.intOrNull != 1 ||
-                metadata["repository"]?.jsonPrimitive?.contentOrNull != "bgwastu/memoize" ||
-                metadata["platform"]?.jsonPrimitive?.contentOrNull != "android" ||
-                metadata["tag"]?.jsonPrimitive?.contentOrNull != tag ||
-                metadata["version_name"]?.jsonPrimitive?.contentOrNull != name ||
-                metadata["source_sha"]?.jsonPrimitive?.contentOrNull?.matches(Regex("[0-9a-f]{40}")) != true ||
-                metadata["assets"]?.jsonObject?.get(filename)?.jsonPrimitive?.contentOrNull?.matches(Regex("[0-9a-f]{64}")) != true ||
-                metadata["signing_certificate_sha256"]?.jsonPrimitive?.contentOrNull?.lowercase() != certificate.lowercase() ||
-                code !in 1..2_100_000_000 || code <= installedCode || code <= (newest?.versionCode ?: 0)) continue
-            newest = AndroidUpdate(name, code, apk)
+
+            for (release in releases) {
+                val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: continue
+                if (!tag.matches(Regex("android/v[0-9]+\\.[0-9]+\\.[0-9]+")) ||
+                    release["draft"]?.jsonPrimitive?.booleanOrNull != false ||
+                    release["prerelease"]?.jsonPrimitive?.booleanOrNull != false) continue
+                val name = tag.removePrefix("android/v")
+                val assets = release["assets"]?.jsonArray?.associate { asset ->
+                    val fields = asset.jsonObject
+                    fields["name"]!!.jsonPrimitive.content to fields["browser_download_url"]!!.jsonPrimitive.content
+                } ?: continue
+                val filename = "Memoize-$name.apk"
+                val apk = assets[filename] ?: continue
+                val manifest = assets["release.json"] ?: continue
+                require(validAsset(apk, tag, filename) && validAsset(manifest, tag, "release.json")) { "Invalid Android release asset origin" }
+                val metadata = Json.parseToJsonElement(api.get(manifest).body).jsonObject
+                val code = metadata["version_code"]?.jsonPrimitive?.intOrNull ?: continue
+                val sha = metadata["assets"]?.jsonObject?.get(filename)?.jsonPrimitive?.contentOrNull.orEmpty()
+                if (metadata["schema"]?.jsonPrimitive?.intOrNull != 1 ||
+                    metadata["repository"]?.jsonPrimitive?.contentOrNull != "bgwastu/memoize" ||
+                    metadata["platform"]?.jsonPrimitive?.contentOrNull != "android" ||
+                    metadata["tag"]?.jsonPrimitive?.contentOrNull != tag ||
+                    metadata["version_name"]?.jsonPrimitive?.contentOrNull != name ||
+                    metadata["source_sha"]?.jsonPrimitive?.contentOrNull?.matches(Regex("[0-9a-f]{40}")) != true ||
+                    !sha.matches(Regex("[0-9a-f]{64}")) ||
+                    metadata["signing_certificate_sha256"]?.jsonPrimitive?.contentOrNull?.lowercase() != certificate.lowercase() ||
+                    code !in 1..2_100_000_000) continue
+                if (code <= installedCode) {
+                    reachedCurrentOrOlder = true
+                    break
+                }
+                if (code > (newest?.versionCode ?: 0)) {
+                    newest = AndroidUpdate(name, code, apk, sha)
+                    reachedCurrentOrOlder = true
+                    break
+                }
+            }
         }
         return newest
     }

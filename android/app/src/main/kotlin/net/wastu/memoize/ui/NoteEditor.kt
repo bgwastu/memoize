@@ -49,6 +49,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import net.wastu.memoize.data.NoteLocation
 import net.wastu.memoize.location.LocationService
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
+import net.wastu.memoize.data.NoteVisibility
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -294,6 +299,9 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
             )
         }
     }
+    val dark = isSystemInDarkTheme()
+    val pinkContainer = if (dark) Color(0xFF4A1528) else Color(0xFFFFD8E4)
+    val pinkContent = if (dark) Color(0xFFFFB0CD) else Color(0xFF880E4F)
     val colors = MaterialTheme.colorScheme
     val palette = SourcePalette(colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
         colors.surfaceContainerHigh.toArgb(), colors.onTertiaryContainer.toArgb(), colors.tertiaryContainer.toArgb(),
@@ -303,45 +311,40 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     }
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), topBar = {
         TopAppBar(
-            title = {
-                if (saveStatus.saving) {
-                    Text(
-                        text = "Saving…",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            },
+            title = {},
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 scrolledContainerColor = MaterialTheme.colorScheme.surface
             ),
             navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", !leaving, close) },
             actions = {
-                IconAction(
-                    R.drawable.ic_pin,
-                    if (note.pinned) "Unpin note" else "Pin note",
-                    enabled = !leaving
-                ) {
-                    scope.launch {
-                        try {
-                            val saved = session.flush(snapshot(), state.characterEpoch)
-                            notes.setPinned(saved.id, !saved.pinned)
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            snackbar.showSnackbar(e.message ?: "Unable to update pin status")
-                        }
-                    }
-                }
                 IconAction(R.drawable.ic_more, "Note options") { menu = true }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(
                         text = {
-                            Text(
-                                "Edited ${timestamp(note.updatedAt)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Column {
+                                Text(
+                                    if (saveStatus.saving) "Saving…" else "Saved",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (saveStatus.saving) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    "Edited ${timestamp(note.updatedAt)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        leadingIcon = {
+                            if (saveStatus.saving) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            } else {
+                                AppIcon(R.drawable.ic_check)
+                            }
                         },
                         onClick = {},
                         enabled = false
@@ -355,6 +358,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                                 try {
                                     val saved = session.flush(snapshot(), state.characterEpoch)
                                     notes.setPinned(saved.id, !saved.pinned)
+                                    snackbar.showSnackbar(if (!saved.pinned) "Pinned to top" else "Unpinned")
                                 } catch (e: Exception) {
                                     if (e is CancellationException) throw e
                                     snackbar.showSnackbar(e.message ?: "Unable to update pin")
@@ -362,26 +366,40 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                             }
                         }
                     )
+                    val isPublic = note.visibility == NoteVisibility.PUBLIC
                     DropdownMenuItem(
-                        text = {
-                            Text(when (note.visibility) {
-                                net.wastu.memoize.data.NoteVisibility.PRIVATE -> "Visibility: Private"
-                                net.wastu.memoize.data.NoteVisibility.PROTECTED -> "Visibility: Protected"
-                                net.wastu.memoize.data.NoteVisibility.PUBLIC -> "Visibility: Public"
-                            })
+                        text = { Text("Share to public") },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_public),
+                                contentDescription = "Share to public",
+                                tint = if (isPublic) pinkContent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            if (isPublic) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = pinkContainer
+                                ) {
+                                    Text(
+                                        "Public",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = pinkContent,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
                         },
                         onClick = {
                             menu = false
-                            val next = when (note.visibility) {
-                                net.wastu.memoize.data.NoteVisibility.PRIVATE -> net.wastu.memoize.data.NoteVisibility.PROTECTED
-                                net.wastu.memoize.data.NoteVisibility.PROTECTED -> net.wastu.memoize.data.NoteVisibility.PUBLIC
-                                net.wastu.memoize.data.NoteVisibility.PUBLIC -> net.wastu.memoize.data.NoteVisibility.PRIVATE
-                            }
+                            val next = if (isPublic) NoteVisibility.PRIVATE else NoteVisibility.PUBLIC
                             scope.launch {
                                 try {
                                     val saved = session.flush(snapshot(), state.characterEpoch)
                                     notes.setVisibility(saved.id, next)
-                                    snackbar.showSnackbar("Visibility set to ${next.name.lowercase().replaceFirstChar { it.uppercase() }}")
+                                    snackbar.showSnackbar(if (next == NoteVisibility.PUBLIC) "Shared to public" else "Set to private")
                                 } catch (e: Exception) {
                                     if (e is CancellationException) throw e
                                     snackbar.showSnackbar(e.message ?: "Unable to update visibility")
@@ -389,46 +407,81 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                             }
                         }
                     )
-                    DropdownMenuItem(text = { Text(if (note.state == NoteState.NORMAL) "Archive" else "Unarchive") },
-                        leadingIcon = { AppIcon(R.drawable.ic_archive) }, onClick = {
-                        menu = false
-                        leaving = true
-                        scope.launch {
-                            try {
-                                val saved = session.flush(snapshot(), state.characterEpoch)
-                                notes.setState(saved.id, if (note.state == NoteState.NORMAL) NoteState.ARCHIVED else NoteState.NORMAL)
-                                finalized = true
-                                leave()
-                            } catch (exception: Exception) {
-                                if (exception is kotlinx.coroutines.CancellationException) throw exception
-                                snackbar.showSnackbar(exception.message ?: "Unable to change note state")
-                            } finally { leaving = false }
+                    DropdownMenuItem(
+                        text = { Text(if (note.state == NoteState.NORMAL) "Archive" else "Unarchive") },
+                        leadingIcon = { AppIcon(R.drawable.ic_archive) },
+                        onClick = {
+                            menu = false
+                            leaving = true
+                            scope.launch {
+                                try {
+                                    val saved = session.flush(snapshot(), state.characterEpoch)
+                                    notes.setState(saved.id, if (note.state == NoteState.NORMAL) NoteState.ARCHIVED else NoteState.NORMAL)
+                                    finalized = true
+                                    leave()
+                                } catch (exception: Exception) {
+                                    if (exception is kotlinx.coroutines.CancellationException) throw exception
+                                    snackbar.showSnackbar(exception.message ?: "Unable to change note state")
+                                } finally { leaving = false }
+                            }
                         }
-                    })
-                    DropdownMenuItem(text = { Text("Recovery versions") },
-                        leadingIcon = { AppIcon(R.drawable.ic_history) }, onClick = { menu = false; history = true })
-                    DropdownMenuItem(text = { Text("Delete") },
-                        leadingIcon = { AppIcon(R.drawable.ic_close) }, onClick = {
-                    menu = false
-                    leaving = true
-                    graph.scope.launch {
-                        try {
-                            val saved = session.flush(snapshot(), state.characterEpoch)
-                            val deadline = notes.markDeleted(saved.id)
-                            finalized = true
-                            state.hideKeyboard(); leave()
-                            showUndoUntil(snackbar, "Note deleted", deadline, onUndo = { notes.undoDelete(saved.id) })
-                        } catch (exception: Exception) {
-                            if (exception is kotlinx.coroutines.CancellationException) throw exception
-                            snackbar.showSnackbar(exception.message ?: "Unable to delete this note")
-                        } finally { leaving = false }
-                    }
-                })
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Recovery versions") },
+                        leadingIcon = { AppIcon(R.drawable.ic_history) },
+                        onClick = { menu = false; history = true }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete") },
+                        leadingIcon = { AppIcon(R.drawable.ic_close) },
+                        onClick = {
+                            menu = false
+                            leaving = true
+                            graph.scope.launch {
+                                try {
+                                    val saved = session.flush(snapshot(), state.characterEpoch)
+                                    val deadline = notes.markDeleted(saved.id)
+                                    finalized = true
+                                    state.hideKeyboard(); leave()
+                                    showUndoUntil(snackbar, "Note deleted", deadline, onUndo = { notes.undoDelete(saved.id) })
+                                } catch (exception: Exception) {
+                                    if (exception is kotlinx.coroutines.CancellationException) throw exception
+                                    snackbar.showSnackbar(exception.message ?: "Unable to delete this note")
+                                } finally { leaving = false }
+                            }
+                        }
+                    )
+                }
             }
-        })
+        )
     }, snackbarHost = { SnackbarHost(snackbar) }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 760.dp).fillMaxSize()) {
+            if (note.visibility == NoteVisibility.PUBLIC) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = pinkContainer,
+                    modifier = Modifier.padding(start = 20.dp, top = 4.dp, bottom = 2.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_public),
+                            contentDescription = "Public note",
+                            tint = pinkContent,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "Public",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = pinkContent
+                        )
+                    }
+                }
+            }
             NativeSourceField(state, enabled = !leaving,
                 modifier = Modifier.weight(1f).fillMaxWidth())
             note.location?.let { loc ->

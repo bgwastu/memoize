@@ -102,6 +102,20 @@ final class SourceTextView: NSTextView {
         setSelectedRange(edit.selection)
         breakUndoCoalescing()
     }
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 1, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty, window?.firstResponder === self,
+           !hasMarkedText(), selectedRanges.count == 1, selectedRange().length == 0 {
+            let offset = characterIndexForInsertion(at:convert(event.locationInWindow,from:nil))
+            if let edit = MarkdownListEditing.toggleTask(in:string,at:offset) {
+                let selection = selectedRange()
+                withUndoGroup("Toggle Checkbox") {
+                    replaceSelectedLines(edit.range,with:edit.replacement,selection:selection,undoSelection:selection)
+                }
+                return
+            }
+        }
+        super.mouseDown(with:event)
+    }
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
             if event.charactersIgnoringModifiers == "[" { navigate?(1); return }

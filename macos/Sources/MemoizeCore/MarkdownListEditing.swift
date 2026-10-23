@@ -67,6 +67,20 @@ public enum MarkdownListEditing {
         let replacement = newline + current.next
         return Edit(range:selection,replacement:replacement,selection:NSRange(location:selection.location + replacement.utf16.count,length:0))
     }
+    /// Flips a task checkbox when `offset` is on its brackets or the gap after them. Fenced or non-list text is ignored.
+    public static func toggleTask(in source: String, at offset: Int) -> Edit? {
+        let ns = source as NSString
+        guard offset >= 0, offset <= ns.length else { return nil }
+        let range = line(ns,at:offset)
+        guard let current = item(ns.substring(with:range)), current.task else { return nil }
+        let context = context(ns,before:range.location)
+        guard !context.fenced, current.column < 4 || context.items.contains(where:{ $0.column < current.column }) else { return nil }
+        let bracket = range.location + (current.indent + current.marker + current.gap).utf16.count
+        guard offset >= bracket, offset <= range.location + current.length else { return nil }
+        let mark = NSRange(location:bracket + 1,length:1)
+        let replacement = ns.substring(with:mark) == " " ? "x" : " "
+        return Edit(range:mark,replacement:replacement,selection:NSRange(location:offset,length:0))
+    }
     /// Selected source lines can be shifted even outside a Markdown list.
     public static func selectionIndent(in source: String, selection: NSRange, outdent: Bool) -> Edit? {
         let ns = source as NSString

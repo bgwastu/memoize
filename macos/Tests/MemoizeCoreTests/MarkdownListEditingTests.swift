@@ -58,4 +58,12 @@ final class MarkdownListEditingTests: XCTestCase {
         XCTAssertEqual((split as NSString).replacingCharacters(in:newline.range,with:newline.replacement),"- Alpha \n- beta")
         XCTAssertNil(MarkdownListEditing.newline(in:source,selection:NSRange(location:4,length:12)))
     }
+    func testTaskToggleOnlyOnMarker() {
+        let s = "- [ ] a\n- [x] b\n- c\n```\n- [ ] d\n```"
+        XCTAssertEqual(MarkdownListEditing.toggleTask(in:s,at:3)?.replacement,"x")
+        XCTAssertEqual(MarkdownListEditing.toggleTask(in:s,at:11)?.replacement," ")
+        XCTAssertNil(MarkdownListEditing.toggleTask(in:s,at:7))
+        XCTAssertNil(MarkdownListEditing.toggleTask(in:s,at:18))
+        XCTAssertNil(MarkdownListEditing.toggleTask(in:s,at:30))
+    }
 }

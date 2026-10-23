@@ -35,7 +35,8 @@ import net.wastu.memoize.data.TextMatch
 /** Read-only native paragraphs share editor spans without Compose's extra paragraph breaks. */
 @Composable
 internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style: TextStyle,
-    color: Color, maxLines: Int, fullSource: String = source, sourceOffset: Int = 0) {
+    color: Color, maxLines: Int, fullSource: String = source, sourceOffset: Int = 0,
+    onToggleTask: ((SourceEdit) -> Unit)? = null) {
     val parsed by produceState(sourceOffset to DisplayStyles(fullSource, "", emptyList()), fullSource, sourceOffset, source) {
         value = sourceOffset to withContext(Dispatchers.Default) {
             sourceStyles(fullSource, "", sourceOffset, (sourceOffset + source.length.coerceAtMost(512)).coerceAtMost(fullSource.length))
@@ -86,6 +87,10 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
                                 val x = event.x
                                 if (x >= layout.getLineLeft(line) && x <= layout.getLineRight(line)) {
                                     val offset = layout.getOffsetForHorizontal(line, x)
+                                    if (onToggleTask != null) taskToggleAt(fullSource, sourceOffset + offset)?.let {
+                                        onToggleTask(it)
+                                        return@setOnTouchListener true
+                                    }
                                     val link = findLinkAt(display, offset)
                                     if (link != null) {
                                         try {

@@ -597,6 +597,7 @@ private fun NotesList(
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
 ) {
+    val taskScope = rememberCoroutineScope()
     val query = filter.query
     val filtered = filter.tag != null || filter.attachments != AttachmentFilter.ANY || filter.state != NoteState.NORMAL
 
@@ -759,7 +760,18 @@ private fun NotesList(
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 8,
                                                 fullSource = note.content,
-                                                sourceOffset = sourceOffset
+                                                sourceOffset = sourceOffset,
+                                                onToggleTask = if (selecting || !enabled || query.isNotEmpty()) null else { edit ->
+                                                    taskScope.launch {
+                                                        try {
+                                                            val current = repository.get(note.id) ?: return@launch
+                                                            if (current.content != note.content) return@launch
+                                                            val content = current.content.replaceRange(edit.range.min, edit.range.max, edit.replacement)
+                                                            repository.saveEdit(note.id, EditSnapshot(content, current.selectionStart,
+                                                                current.selectionEnd, current.scroll))
+                                                        } catch (_: Exception) {}
+                                                    }
+                                                }
                                             )
                                         }
                                     }

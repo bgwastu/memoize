@@ -258,6 +258,22 @@ private fun nextListNumber(items: List<ListItemPrefix>, column: Int): Int {
     return 1
 }
 
+/** Toggles a task checkbox when [offset] lands on its brackets or the gap after them; fenced or non-list text is ignored. */
+fun taskToggleAt(source: String, offset: Int): SourceEdit? {
+    if (offset < 0 || offset > source.length) return null
+    val start = source.lastIndexOf('\n', offset - 1) + 1
+    val end = source.indexOf('\n', start).let { if (it < 0) source.length else it }
+    val line = source.substring(start, end).removeSuffix("\r")
+    val context = precedingLists(source, start)
+    val item = context.append(line) ?: return null
+    if (!item.task) return null
+    val bracket = start + item.indent.length + item.marker.length + item.gap.length
+    if (offset < bracket || offset > start + item.length) return null
+    val checked = source[bracket + 1] == ' '
+    val selection = TextRange(offset)
+    return SourceEdit(TextRange(bracket + 1, bracket + 2), if (checked) "x" else " ", selection)
+}
+
 /** A source replacement independent of the Android editor renderer. Offsets are UTF-16. */
 data class SourceEdit(val range: TextRange, val replacement: String, val selection: TextRange)
 

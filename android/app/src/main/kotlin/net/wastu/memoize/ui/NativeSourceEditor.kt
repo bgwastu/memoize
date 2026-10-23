@@ -743,6 +743,13 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                             val x = event.x - totalPaddingLeft + scrollX
                             if (x >= result.getLineLeft(line) && x <= result.getLineRight(line)) {
                                 val offset = result.getOffsetForHorizontal(line, x)
+                                if (canCommand() && range().collapsed) {
+                                    taskToggleAt(revision, offset)?.let { edit ->
+                                        finishComposition()
+                                        command(edit.copy(selection = range()))
+                                        return true
+                                    }
+                                }
                                 val link = styled?.first?.let { findLinkAt(it, offset) }
                                 if (link != null) {
                                     openLink(link.first)

@@ -60,11 +60,4 @@ On Android, select text and use the indent/outdent buttons to shift its lines.
 
 Mac requires Xcode 26+. Build with `macos/Scripts/build.sh debug`.
 
-Android: build locally with `android/gradlew -p android assembleDebug`.
-Use the real device `adb connect atlas.mesh:5555`; no emulators.
-
-Work directly on `main` with signed commits. CI builds and publishes only
-the apps affected by a push; documentation and screenshots skip releases.
-Run relevant checks locally.
-
-AI disclosure: Human validated.
+Android: `android/gradlew -p android assembleDebug`.

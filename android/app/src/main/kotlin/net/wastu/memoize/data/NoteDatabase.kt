@@ -123,6 +123,8 @@ internal interface NoteDao {
     @RawQuery
     suspend fun queryPreviews(query: RoomRawQuery): List<NotePreviewRow>
     @Upsert suspend fun put(note: NoteEntity)
+    @Query("UPDATE notes SET selectionStart = :start, selectionEnd = :end, scroll = :scroll WHERE account = :account AND id = :id")
+    suspend fun setView(account: String, id: String, start: Int, end: Int, scroll: Int)
     @Query("DELETE FROM notes WHERE account = :account AND id = :id")
     suspend fun delete(account: String, id: String)
     @Query("SELECT * FROM pending_operations WHERE account = :account ORDER BY noteId ASC")

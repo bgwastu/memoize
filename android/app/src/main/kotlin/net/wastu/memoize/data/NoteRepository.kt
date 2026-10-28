@@ -106,6 +106,14 @@ class NoteRepository private constructor(
         val current = dao.get(account, id) ?: return@transaction preserveDeletedEdit(id, edit)
         check(current.deleteAfter == null) { "This note is pending deletion. Undo deletion before editing." }
         val changed = current.content != edit.content
+        if (!changed) {
+            // Cursor/scroll-only edit: touch just the view columns, not the whole row.
+            val start = edit.selectionStart.coerceIn(0, edit.content.length)
+            val end = edit.selectionEnd.coerceIn(0, edit.content.length)
+            val scroll = maxOf(0, edit.scroll)
+            if (start != current.selectionStart || end != current.selectionEnd || scroll != current.scroll) dao.setView(account, id, start, end, scroll)
+            return@transaction current.copy(selectionStart = start, selectionEnd = end, scroll = scroll).note()
+        }
         val incomingChanged = edit.origin != null && edit.origin.content != current.content && changed
         val message = if (changed) null else current.error
         if (incomingChanged) {

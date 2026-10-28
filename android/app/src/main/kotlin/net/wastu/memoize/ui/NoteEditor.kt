@@ -121,6 +121,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
@@ -222,13 +223,18 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
         snapshotFlow {
             Triple(state.text, state.viewport.min / 512 * 512, (state.viewport.max + 511) / 512 * 512)
         }.mapLatest { (input, start, end) ->
+            // Wait out a fling; a newer window cancels this one before any parsing or span churn.
+            delay(120)
             withContext(Dispatchers.Default) { sourceStyles(input, query, start, end) }
         }.collect { display = it }
     }
-    LaunchedEffect(state.viewport, firstHit) {
-        if (!retained.initialMatchShown && firstHit != null && state.viewport.length > 0) {
-            retained.initialMatchShown = true
-            state.reveal(firstHit.start)
+    LaunchedEffect(state, firstHit) {
+        if (firstHit == null) return@LaunchedEffect
+        snapshotFlow { state.viewport.length > 0 }.collect { shown ->
+            if (shown && !retained.initialMatchShown) {
+                retained.initialMatchShown = true
+                state.reveal(firstHit.start)
+            }
         }
     }
     LaunchedEffect(note, state.characterEpoch, state.composition, state.commandReady, saveStatus.receipt) {

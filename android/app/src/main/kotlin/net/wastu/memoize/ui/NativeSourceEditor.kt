@@ -65,7 +65,8 @@ internal class NativeSourceState(note: Note, selection: TextRange) {
         private set
     var composition by mutableStateOf<TextRange?>(null)
         private set
-    var scroll by mutableStateOf(note.scroll)
+    // Deliberately not Compose state: scrolling must not look like an edit. The view is read on save/leave.
+    var scroll = note.scroll
         private set
     var viewport by mutableStateOf(TextRange(selection.min, selection.max))
         private set

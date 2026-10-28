@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -109,7 +110,7 @@ fun NoteMediaGrid(
             when (images.size) {
                 1 -> {
                     val img = images[0]
-                    val model = attachmentImageModel(img, repository, server, thumbnail = true)
+                    val model = remember(img, server) { attachmentImageModel(img, repository, server, thumbnail = true) }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -135,7 +136,7 @@ fun NoteMediaGrid(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         for (img in images) {
-                            val model = attachmentImageModel(img, repository, server, thumbnail = true)
+                            val model = remember(img, server) { attachmentImageModel(img, repository, server, thumbnail = true) }
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -163,7 +164,7 @@ fun NoteMediaGrid(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         val first = images[0]
-                        val firstModel = attachmentImageModel(first, repository, server, thumbnail = true)
+                        val firstModel = remember(first, server) { attachmentImageModel(first, repository, server, thumbnail = true) }
                         Box(
                             modifier = Modifier
                                 .weight(1.2f)
@@ -187,7 +188,7 @@ fun NoteMediaGrid(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             for (img in images.drop(1)) {
-                                val model = attachmentImageModel(img, repository, server, thumbnail = true)
+                                val model = remember(img, server) { attachmentImageModel(img, repository, server, thumbnail = true) }
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -223,7 +224,7 @@ fun NoteMediaGrid(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             for (img in displayList.take(2)) {
-                                val model = attachmentImageModel(img, repository, server, thumbnail = true)
+                                val model = remember(img, server) { attachmentImageModel(img, repository, server, thumbnail = true) }
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -249,7 +250,7 @@ fun NoteMediaGrid(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             val third = displayList[2]
-                            val thirdModel = attachmentImageModel(third, repository, server, thumbnail = true)
+                            val thirdModel = remember(third, server) { attachmentImageModel(third, repository, server, thumbnail = true) }
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -269,7 +270,7 @@ fun NoteMediaGrid(
                                 )
                             }
                             val fourth = displayList[3]
-                            val fourthModel = attachmentImageModel(fourth, repository, server, thumbnail = true)
+                            val fourthModel = remember(fourth, server) { attachmentImageModel(fourth, repository, server, thumbnail = true) }
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -369,7 +370,7 @@ fun MediaLightboxDialog(
             color = Color.Black.copy(alpha = 0.95f)
         ) {
             Box(Modifier.fillMaxSize()) {
-                val fullModel = attachmentImageModel(attachment, repository, server, thumbnail = false)
+                val fullModel = remember(attachment, server) { attachmentImageModel(attachment, repository, server, thumbnail = false) }
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(fullModel)
@@ -438,7 +439,7 @@ fun EditorAttachmentStrip(
     ) {
         items(attachments, key = { it.id }) { attachment ->
             if (attachment.isImage) {
-                val model = attachmentImageModel(attachment, repository, server, thumbnail = true)
+                val model = remember(attachment, server) { attachmentImageModel(attachment, repository, server, thumbnail = true) }
                 Box(
                     modifier = Modifier
                         .size(80.dp)

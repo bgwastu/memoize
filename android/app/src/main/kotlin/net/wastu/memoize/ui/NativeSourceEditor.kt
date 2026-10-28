@@ -224,7 +224,6 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     private var presentation: SourcePresentation? = null
     private var styled: Pair<DisplayStyles, SourcePalette>? = null
     private var styledSelection: TextRange? = null
-    private val derivedSpans = ArrayList<Any>()
     private data class Change(val start: Int, val removed: String, var inserted: String = "", val continueOnNewline: Boolean)
     private val changes = ArrayDeque<Change>()
     private var watched: Editable? = null
@@ -650,32 +649,58 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
             style(previous.first, previous.second)
         }
     }
+    private data class DerivedKey(val start: Int, val end: Int, val kind: Any, val variant: Int = 0) {
+        fun overlaps(other: DerivedKey) = start < other.end && other.start < end
+    }
+    private var derivedKeyed = HashMap<DerivedKey, List<Any>>()
+
+    /**
+     * Reconciles the derived spans with [display]. Every span add/remove reflows its paragraph, so a
+     * window that moved a little must not tear down and rebuild the spans that did not change. A
+     * retained span is re-added only when a changed span overlaps it, which keeps Markdown layering.
+     */
     fun style(display: DisplayStyles, palette: SourcePalette) {
         if (display.input !== revision || (styled == (display to palette) && styledSelection == range())) return
         val body = text ?: return
         decorating = true
         try {
-            derivedSpans.forEach(body::removeSpan)
-            derivedSpans.clear()
+            val previous = if (styled?.second == palette && styled?.first?.input === display.input) derivedKeyed else HashMap<DerivedKey, List<Any>>().also {
+                derivedKeyed.values.forEach { spans -> spans.forEach(body::removeSpan) }
+            }
+            val wanted = LinkedHashMap<DerivedKey, () -> List<Any>>()
             for (styledRange in display.ranges) {
-                val spans = if (styledRange.style == SourceStyle.SYNTAX) {
-                    val marker = styledRange.range
+                val range = styledRange.range
+                if (styledRange.style == SourceStyle.SYNTAX) {
                     val nearby = selectionStart >= 0 && selectionEnd >= 0 &&
-                        minOf(selectionStart, selectionEnd) <= marker.end && maxOf(selectionStart, selectionEnd) >= marker.start
-                    listOf(ForegroundColorSpan(if (nearby) palette.activeSyntax else palette.syntax), SourceSyntaxSpan())
-                } else sourceStyleSpans(styledRange.style, palette)
-                spans.forEach { span ->
-                    body.setSpan(span, styledRange.range.start, styledRange.range.end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    derivedSpans += span
+                        minOf(selectionStart, selectionEnd) <= range.end && maxOf(selectionStart, selectionEnd) >= range.start
+                    wanted.getOrPut(DerivedKey(range.start, range.end, styledRange.style, if (nearby) 1 else 0)) {
+                        { listOf(ForegroundColorSpan(if (nearby) palette.activeSyntax else palette.syntax), SourceSyntaxSpan()) }
+                    }
+                } else wanted.getOrPut(DerivedKey(range.start, range.end, styledRange.style)) { { sourceStyleSpans(styledRange.style, palette) } }
+            }
+            val margins = display.lists.map { paragraph ->
+                // Native measurement includes the current font, letter spacing and tab stops.
+                paragraph to ceil(Layout.getDesiredWidth(body, paragraph.range.start, paragraph.contentStart, paint)).toInt()
+            }
+            for ((paragraph, margin) in margins) {
+                wanted.getOrPut(DerivedKey(paragraph.range.start, paragraph.range.end, "list", margin)) {
+                    { listOf(LeadingMarginSpan.Standard(0, margin)) }
                 }
             }
-            for (paragraph in display.lists) {
-                // Native measurement includes the current font, letter spacing and tab stops.
-                val margin = ceil(Layout.getDesiredWidth(body, paragraph.range.start, paragraph.contentStart, paint)).toInt()
-                val span = LeadingMarginSpan.Standard(0, margin)
-                body.setSpan(span, paragraph.range.start, paragraph.range.end, Spannable.SPAN_PARAGRAPH)
-                derivedSpans += span
+            for ((key, spans) in previous) if (key !in wanted) spans.forEach(body::removeSpan)
+            val next = HashMap<DerivedKey, List<Any>>(wanted.size * 2)
+            val changed = ArrayList<DerivedKey>()
+            for ((key, create) in wanted) {
+                val kept = previous[key]
+                if (kept != null && changed.none { it.overlaps(key) }) { next[key] = kept; continue }
+                kept?.forEach(body::removeSpan)
+                val spans = create()
+                val flags = if (key.kind == "list") Spannable.SPAN_PARAGRAPH else Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                spans.forEach { body.setSpan(it, key.start, key.end, flags) }
+                next[key] = spans
+                changed += key
             }
+            derivedKeyed = next
             styled = display to palette
             styledSelection = range()
         } finally { decorating = false }
@@ -683,6 +708,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
 
     private data class ListDrag(val source: String, val offset: Int, val x: Float, val y: Float, val time: Long, var claimed: Boolean = false)
     private var drag: ListDrag? = null
+    private var dragPending = false
     private var tapDownX = 0f
     private var tapDownY = 0f
     private var tapDownTime = 0L
@@ -693,21 +719,24 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
             MotionEvent.ACTION_DOWN -> {
                 drag = null
                 tapDownX = event.x; tapDownY = event.y; tapDownTime = event.eventTime
-                val result = layout
-                if (canCommand() && range().collapsed && result != null && event.x >= 8 * resources.displayMetrics.density) {
-                    val y = (event.y - totalPaddingTop + scrollY).toInt()
-                    if (y in 0 until result.height) {
-                        val line = result.getLineForVertical(y)
-                        val start = result.getLineStart(line)
-                        val offset = getOffsetForPosition(event.x, event.y)
-                        val prefix = listPrefixLength(revision, start)
-                        if (start == revision.lastIndexOf('\n', start - 1) + 1 && prefix != null && offset <= start + prefix &&
-                            listIndent(revision, TextRange(offset), false) != null) {
-                            drag = ListDrag(revision, offset, event.x, event.y, event.eventTime)
-                        }
+                // The list-marker lookup parses the document above the touch, so it is deferred
+                // until the finger actually moves sideways; a plain vertical scroll never pays for it.
+                dragPending = canCommand() && range().collapsed && event.x >= 8 * resources.displayMetrics.density
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (dragPending) {
+                    val dx = event.x - tapDownX
+                    val dy = event.y - tapDownY
+                    if (event.pointerCount != 1 || abs(dy) > config.scaledTouchSlop ||
+                        event.eventTime - tapDownTime >= ViewConfiguration.getLongPressTimeout()) dragPending = false
+                    else if (abs(dx) > config.scaledTouchSlop && abs(dx) > abs(dy) * 1.25f) {
+                        dragPending = false
+                        drag = listDragAt(tapDownX, tapDownY, tapDownTime)
                     }
                 }
             }
+        }
+        when (event.actionMasked) {
             MotionEvent.ACTION_MOVE -> drag?.let { candidate ->
                 val dx = event.x - candidate.x
                 val dy = event.y - candidate.y
@@ -761,11 +790,20 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                     }
                 }
             }
-            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> { drag = null; parent?.requestDisallowInterceptTouchEvent(false) }
+            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> { drag = null; dragPending = false; parent?.requestDisallowInterceptTouchEvent(false) }
         }
         val handled = super.onTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return handled
+    }
+    private fun listDragAt(x: Float, y: Float, time: Long): ListDrag? {
+        val result = layout ?: return null
+        val line = (y - totalPaddingTop + scrollY).toInt().takeIf { it in 0 until result.height }?.let(result::getLineForVertical) ?: return null
+        val start = result.getLineStart(line)
+        val offset = getOffsetForPosition(x, y)
+        val prefix = listPrefixLength(revision, start)
+        return if (start == revision.lastIndexOf('\n', start - 1) + 1 && prefix != null && offset <= start + prefix &&
+            listIndent(revision, TextRange(offset), false) != null) ListDrag(revision, offset, x, y, time) else null
     }
     private fun openLink(url: String) {
         try {

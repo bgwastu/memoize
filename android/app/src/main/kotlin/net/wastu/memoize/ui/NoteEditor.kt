@@ -214,8 +214,10 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     var attachmentChoice by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
     var finalized by remember { mutableStateOf(false) }
-    var display by remember { mutableStateOf(DisplayStyles(state.text, query, emptyList())) }
+    // Plain holder: publishing a new styling window must restyle the native view, not recompose the screen.
+    val display = remember { arrayOf(DisplayStyles(state.text, query, emptyList())) }
     fun snapshot() = state.snapshot()
+    val currentPalette = remember { object { var value: SourcePalette? = null } }
 
     LaunchedEffect(state) {
         snapshotFlow { snapshot() to state.characterEpoch }.collect { (edit, epoch) -> session.submit(edit, epoch) }
@@ -227,7 +229,10 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
             // Wait out a fling; a newer window cancels this one before any parsing or span churn.
             delay(120)
             withContext(Dispatchers.Default) { sourceStyles(input, query, start, end) }
-        }.collect { display = it }
+        }.collect { styles ->
+            display[0] = styles
+            if (styles.input === state.text && styles.query == query) currentPalette.value?.let { state.style(styles, it) }
+        }
     }
     LaunchedEffect(state, firstHit) {
         if (firstHit == null) return@LaunchedEffect
@@ -337,8 +342,10 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     val palette = SourcePalette(colors.primary.toArgb(), colors.secondary.toArgb(), colors.tertiary.toArgb(),
         colors.surfaceContainerHigh.toArgb(), colors.onTertiaryContainer.toArgb(), colors.tertiaryContainer.toArgb(),
         colors.sourceSyntaxColor().toArgb(), colors.sourceSyntaxColor(active = true).toArgb())
-    LaunchedEffect(display, palette, query) {
-        if (display.input === state.text && display.query == query) state.style(display, palette)
+    currentPalette.value = palette
+    LaunchedEffect(palette, query) {
+        val styles = display[0]
+        if (styles.input === state.text && styles.query == query) state.style(styles, palette)
     }
     Scaffold(modifier = Modifier.fillMaxSize().imePadding(), topBar = {
         TopAppBar(

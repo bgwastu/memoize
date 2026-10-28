@@ -89,6 +89,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -124,7 +125,6 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.runBlocking
 import net.wastu.memoize.R
 import net.wastu.memoize.data.EditSnapshot
 import net.wastu.memoize.data.LiteralSearch
@@ -144,8 +144,9 @@ fun NoteEditor(graph: AppGraph, notes: NoteRepository, id: String, query: String
     // missing row must never close the new recovered editor before that row is loaded.
     val matching = observed?.takeIf { it.account == notes.account && it.id == id }
     val note = matching?.note
-    val initial = remember(notes.account, sessionKey) { runBlocking { notes.get(id) } }
-    var lastCommitted by remember(notes, sessionKey) { mutableStateOf<Note?>(initial) }
+    val initial by produceState<Note?>(null, notes.account, sessionKey) { value = notes.get(id) }
+    var lastCommitted by remember(notes, sessionKey) { mutableStateOf<Note?>(null) }
+    LaunchedEffect(initial) { if (lastCommitted == null) lastCommitted = initial }
     LaunchedEffect(note) { note?.let { lastCommitted = it } }
     val current = note ?: lastCommitted
     val missing = matching != null && note == null

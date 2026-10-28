@@ -116,10 +116,11 @@ class SyncEngine(
                 if (failure.retryable) transient = error
             }
         }
-        for (cleanup in notes.attachmentCleanup()) {
-            if (cleanup.deleteAfter > clock() || (cleanup.retryAt ?: 0) > clock()) continue
+        val cleanups = notes.attachmentCleanup().filter { it.deleteAfter <= clock() && (it.retryAt ?: 0) <= clock() }
+        val referenced = if (cleanups.isEmpty()) emptySet() else notes.all().flatMap { note -> note.attachments.map { it.id } }.toSet()
+        for (cleanup in cleanups) {
             val current = cleanup.noteId?.let { notes.get(it) }
-            if (notes.all().any { note -> note.attachments.any { it.id == cleanup.attachment.id } }) {
+            if (cleanup.attachment.id in referenced) {
                 notes.finishAttachmentCleanup(cleanup.attachment.id)
                 continue
             }

@@ -354,7 +354,9 @@ class NoteRepository private constructor(
             pinned = remote.pinned,
             locationJson = SnapshotCodec.location(remote.location),
         )
-        dao.put(saved); saved.note()
+        // An unchanged row must not be rewritten: every write invalidates observers and re-runs searches.
+        if (saved != current) dao.put(saved)
+        saved.note()
     }
 
     suspend fun recovery(id: String): List<RecoveryRevision> = dao.recovery(account, id).map {

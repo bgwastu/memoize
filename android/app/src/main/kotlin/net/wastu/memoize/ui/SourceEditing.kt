@@ -264,6 +264,7 @@ fun taskToggleAt(source: String, offset: Int): SourceEdit? {
     val start = source.lastIndexOf('\n', offset - 1) + 1
     val end = source.indexOf('\n', start).let { if (it < 0) source.length else it }
     val line = source.substring(start, end).removeSuffix("\r")
+    if ('[' !in line) return null // Skip the document-long list parse for taps on ordinary text.
     val context = precedingLists(source, start)
     val item = context.append(line) ?: return null
     if (!item.task) return null

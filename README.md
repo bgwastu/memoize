@@ -58,6 +58,8 @@ If macOS blocks the first launch, choose **System Settings → Privacy & Securit
 | Return | Continue a Markdown list |
 | Tab / ⇧Tab | Indent / outdent selected lines; nest / outdent a list at the caret |
 
+On Android hardware keyboards, the line shortcuts use Ctrl for ⌘ and Alt for ⌥.
+
 On Android, select text and use the indent/outdent buttons to shift its lines.
 
 ## Development

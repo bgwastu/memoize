@@ -546,7 +546,33 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     }
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) { super.onScrollChanged(l, t, oldl, oldt); scheduleSettle() }
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { super.onSizeChanged(w, h, oldw, oldh); scheduleSettle() }
+    /** Monaco's Windows and Linux line shortcuts on hardware keyboards. */
+    private fun lineShortcut(keyCode: Int, event: KeyEvent): Boolean {
+        if (event.isMetaPressed || event.isCtrlPressed == event.isAltPressed || !canCommand()) return false
+        val source = revision
+        val selection = range()
+        val shift = event.isShiftPressed
+        val edit = if (event.isAltPressed) when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> if (shift) copySourceLines(source, selection, false) else moveSourceLines(source, selection, true)
+            KeyEvent.KEYCODE_DPAD_DOWN -> if (shift) copySourceLines(source, selection, true) else moveSourceLines(source, selection, false)
+            else -> return false
+        } else when (keyCode) {
+            KeyEvent.KEYCODE_K -> if (shift) deleteSourceLines(source, selection) else return false
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> insertSourceLine(source, selection, shift)
+            KeyEvent.KEYCODE_RIGHT_BRACKET -> if (shift) return false else indentSourceLines(source, selection, false)
+            KeyEvent.KEYCODE_LEFT_BRACKET -> if (shift) return false else indentSourceLines(source, selection, true)
+            KeyEvent.KEYCODE_L -> {
+                if (shift) return false
+                selectSourceLine(source, selection)?.let { setSelection(it.start, it.end) }
+                return true
+            }
+            else -> return false
+        }
+        edit?.let(::command)
+        return true
+    }
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (lineShortcut(keyCode, event)) return true
         if (keyCode == KeyEvent.KEYCODE_TAB && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed && canCommand()) {
             val edit = sourceIndent(revision, range(), event.isShiftPressed)
             if (edit != null) { command(edit); return true }

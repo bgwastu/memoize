@@ -3,6 +3,7 @@ package net.wastu.memoize.ui
 import androidx.compose.ui.text.TextRange
 import net.wastu.memoize.R
 import net.wastu.memoize.data.TextMatch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -92,6 +93,12 @@ internal fun findLinkAt(display: DisplayStyles, offset: Int): Pair<String, TextM
 
 /** Bound display annotations around the viewport; source and full-body repository search stay exact. */
 suspend fun sourceStyles(input: CharSequence, query: String, anchor: Int = 0, visibleEnd: Int = anchor + 1_024): DisplayStyles {
+    val job = currentCoroutineContext()[Job]
+    return windowStyles(input, query, anchor, visibleEnd) { job?.ensureActive() }
+}
+
+/** Synchronous [sourceStyles] for a first frame that must not draw unstyled text. */
+internal fun windowStyles(input: CharSequence, query: String, anchor: Int, visibleEnd: Int, checkActive: () -> Unit = {}): DisplayStyles {
     val body = input.toString()
     // AnnotatedString queries intersecting styles for every paragraph. Styling all of a megabyte
     // document can turn native paragraph layout quadratic even when parsing is off the UI thread.
@@ -129,7 +136,7 @@ suspend fun sourceStyles(input: CharSequence, query: String, anchor: Int = 0, vi
             else -> expression.findAll(source)
         }
         matches.forEach { match ->
-            currentCoroutineContext().ensureActive()
+            checkActive()
             val from = match.range.first
             val to = match.range.last + 1
             ranges += StyledRange(TextMatch(start + from, start + to), style)
@@ -177,7 +184,7 @@ suspend fun sourceStyles(input: CharSequence, query: String, anchor: Int = 0, vi
     val context = ListContext(retainHistory = false)
     var lineStart = 0
     while (lineStart < end) {
-        currentCoroutineContext().ensureActive()
+        checkActive()
         val lineEnd = body.indexOf('\n', lineStart).let { if (it < 0) body.length else it }
         val paragraphEnd = if (lineEnd < body.length) lineEnd + 1 else lineEnd
         val prefix = context.append(body.substring(lineStart, lineEnd))

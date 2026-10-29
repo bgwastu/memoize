@@ -95,6 +95,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
@@ -222,12 +223,26 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     LaunchedEffect(state) {
         snapshotFlow { snapshot() to state.characterEpoch }.collect { (edit, epoch) -> session.submit(edit, epoch) }
     }
+    SideEffect {
+        state.firstLayout = { visible ->
+            val palette = currentPalette.value
+            // Bounded: list context is parsed from the top of the note on the main thread.
+            if (palette != null && visible.max <= 100_000) {
+                val styles = windowStyles(state.text, query, visible.min / 512 * 512, (visible.max + 511) / 512 * 512)
+                display[0] = styles
+                state.style(styles, palette)
+            }
+        }
+    }
     LaunchedEffect(state, query) {
+        var styledInput: CharSequence? = null
         snapshotFlow {
             Triple(state.text, state.viewport.min / 512 * 512, (state.viewport.max + 511) / 512 * 512)
         }.mapLatest { (input, start, end) ->
             // Wait out a fling; a newer window cancels this one before any parsing or span churn.
-            delay(120)
+            // Edits restyle at once so typed Markdown never shows a stale frame.
+            if (input === styledInput) delay(120)
+            styledInput = input
             withContext(Dispatchers.Default) { sourceStyles(input, query, start, end) }
         }.collect { styles ->
             display[0] = styles

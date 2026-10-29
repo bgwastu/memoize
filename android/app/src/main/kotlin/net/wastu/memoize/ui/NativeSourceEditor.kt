@@ -79,6 +79,8 @@ internal class NativeSourceState(note: Note, selection: TextRange) {
         private set
     private val history = NativeEditHistory()
     private var view: NativeSourceView? = null
+    /** Styles the first laid-out viewport synchronously, before the async window catches up. */
+    var firstLayout: ((TextRange) -> Unit)? = null
     fun snapshot(): EditSnapshot {
         val observed = EditSnapshot(text, selection.start, selection.end, scroll)
         return view?.snapshot() ?: observed
@@ -88,12 +90,14 @@ internal class NativeSourceState(note: Note, selection: TextRange) {
         view = value
         value.seed(text, selection, scroll, history)
         value.onCharactersChanged = { characterEpoch++ }
+        value.onFirstLayout = { visible -> viewport = visible; firstLayout?.invoke(visible) }
         value.observe = { content, range, composing, position, visible, undo, redo, commands ->
             text = content; selection = range; composition = composing; scroll = position
             viewport = visible; canUndo = undo; canRedo = redo; commandReady = commands
         }
     }
     fun detach(value: NativeSourceView) {
+        value.onFirstLayout = null
         if (view !== value) { value.observe = null; value.onCharactersChanged = null; return }
         val snapshot = value.releaseSnapshot()
         text = snapshot.content
@@ -214,6 +218,17 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     }
 
     var onCharactersChanged: (() -> Unit)? = null
+    var onFirstLayout: ((TextRange) -> Unit)? = null
+    private var firstScroll: Int? = null
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        // Style the first visible window before it is ever drawn; async windowing follows.
+        val position = firstScroll ?: return
+        if (!ready || layout == null || width == 0) return
+        firstScroll = null
+        scrollTo(0, position)
+        onFirstLayout?.invoke(visibleRange())
+    }
     var observe: ((String, TextRange, TextRange?, Int, TextRange, Boolean, Boolean, Boolean) -> Unit)? = null
     private var history = NativeEditHistory()
     private var ready = false
@@ -401,6 +416,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
         setSelection(selection.start.coerceIn(0, length()), selection.end.coerceIn(0, length()))
         ready = true
         watchBuffer()
+        firstScroll = position
         post {
             scrollTo(0, position)
             if (isHorizontallyScrollable) {
@@ -447,12 +463,15 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
             styled?.let { style(it.first, it.second) }
         }
         if (!replaying && !nativeBatch) history.finish(range(), composition != null)
-        val result = layout
+        observe?.invoke(revision, range(), composition, scrollY, visibleRange(), history.canUndo, history.canRedo, canReplaceSource())
+    }
+
+    private fun visibleRange(): TextRange {
+        val result = layout ?: return range()
         val top = (scrollY - totalPaddingTop).coerceAtLeast(0)
         val bottom = (scrollY + height - totalPaddingBottom).coerceAtLeast(top)
-        val visible = if (result == null) range() else TextRange(result.getLineStart(result.getLineForVertical(top)),
+        return TextRange(result.getLineStart(result.getLineForVertical(top)),
             result.getLineEnd(result.getLineForVertical(bottom)).coerceAtMost(revision.length))
-        observe?.invoke(revision, range(), composition, scrollY, visible, history.canUndo, history.canRedo, canReplaceSource())
     }
 
     private fun refreshRevision() {

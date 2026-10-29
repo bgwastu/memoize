@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -37,12 +38,16 @@ import net.wastu.memoize.data.TextMatch
 internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style: TextStyle,
     color: Color, maxLines: Int, fullSource: String = source, sourceOffset: Int = 0,
     onToggleTask: ((SourceEdit) -> Unit)? = null) {
-    val parsed by produceState(sourceOffset to DisplayStyles(fullSource, "", emptyList()), fullSource, sourceOffset, source) {
-        value = sourceOffset to withContext(Dispatchers.Default) {
-            sourceStyles(fullSource, "", sourceOffset, (sourceOffset + source.length.coerceAtMost(512)).coerceAtMost(fullSource.length))
-        }
+    val end = (sourceOffset + source.length.coerceAtMost(512)).coerceAtMost(fullSource.length)
+    // Small windows style during composition so wrapped list items never draw without their indent.
+    val immediate = remember(fullSource, sourceOffset, end) {
+        if (end <= 32_768) sourceOffset to windowStyles(fullSource, "", sourceOffset, end) else null
     }
-    val display = if (parsed.first == sourceOffset && parsed.second.input == fullSource)
+    val deferred by produceState<Pair<Int, DisplayStyles>?>(null, fullSource, sourceOffset, end) {
+        if (immediate == null) value = sourceOffset to withContext(Dispatchers.Default) { sourceStyles(fullSource, "", sourceOffset, end) }
+    }
+    val parsed = immediate ?: deferred
+    val display = if (parsed != null && parsed.first == sourceOffset && parsed.second.input == fullSource)
         previewSourceStyles(parsed.second, source, sourceOffset) else DisplayStyles(source, "", emptyList())
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current

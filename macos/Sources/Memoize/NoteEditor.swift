@@ -393,6 +393,8 @@ final class SourceTextView: NSTextView {
         parsing?.cancel()
         guard !textView.hasMarkedText() else { return }
         let source = textView.string; let revision = generation
+        // Typical notes parse in a few milliseconds; color them in the same frame as the keystroke.
+        if (source as NSString).length <= 32_768 { finish(MarkdownAnalysis.parse(source),revision:revision); return }
         parsing = Task { [weak self] in
             // Coalesce edits arriving in this run-loop turn without waiting for a
             // typing pause. The serial worker skips cancelled queued requests.
@@ -400,40 +402,75 @@ final class SourceTextView: NSTextView {
             guard !Task.isCancelled else { return }
             guard let result = await self?.markdown.analyze(source) else { return }
             guard let self, !Task.isCancelled, generation == revision, !textView.hasMarkedText() else { return }
-            apply(result); analysis = result; highlightedGeneration = revision
-            textView.needsDisplay = true
-            onReferences?(result)
+            finish(result,revision:revision)
+        }
+    }
+    private func finish(_ result: MarkdownAnalysis, revision: Int) {
+        apply(result); analysis = result; highlightedGeneration = revision
+        textView.needsDisplay = true
+        onReferences?(result)
+    }
+    private struct StorageRun: Equatable {
+        let range: NSRange; let value: String
+        /// Storage reports equal neighbours as one attribute run.
+        static func coalesced(_ runs: [StorageRun]) -> [StorageRun] {
+            runs.reduce(into:[]) { result,run in
+                if let last = result.last, last.value == run.value, NSMaxRange(last.range) == run.range.location {
+                    result[result.count - 1] = StorageRun(range:NSUnionRange(last.range,run.range),value:run.value)
+                } else { result.append(run) }
+            }
         }
     }
     private func apply(_ result: MarkdownAnalysis) {
         // Links need AppKit hit testing. Finish storage edits before applying rendering colors.
-        let hadLinks = analysis.map { !$0.tags.isEmpty || !$0.links.isEmpty } ?? false
-        let hadLists = analysis.map { !$0.listParagraphs.isEmpty } ?? false
-        if hadLinks || !result.tags.isEmpty || !result.links.isEmpty || hadLists || !result.listParagraphs.isEmpty, let storage = textView.textStorage {
-            let undo = textView.undoManager; let registered = undo?.isUndoRegistrationEnabled == true
-            if registered { undo?.disableUndoRegistration() }
-            storage.beginEditing()
+        // Storage attributes reflow their paragraphs, so rewrite them only when they actually differ.
+        if let storage = textView.textStorage {
             let fullRange = NSRange(location:0,length:storage.length)
-            storage.removeAttribute(.link,range:fullRange)
-            storage.removeAttribute(.underlineStyle,range:fullRange)
-            storage.removeAttribute(.toolTip,range:fullRange)
-            for tag in result.tags { storage.addAttribute(.link,value:"memoize-tag:" + tag.value,range:tag.range) }
-            for link in result.links {
-                storage.addAttribute(.link,value:link.destination,range:link.range)
-                storage.addAttribute(.underlineStyle,value:NSUnderlineStyle.single.rawValue,range:link.range)
-                storage.addAttribute(.toolTip,value:"⌘-click to open " + link.destination,range:link.range)
-            }
             let paragraph = textView.defaultParagraphStyle ?? NSParagraphStyle.default
-            storage.addAttribute(.paragraphStyle,value:paragraph,range:fullRange)
-            for list in result.listParagraphs {
-                let style = paragraph.mutableCopy() as! NSMutableParagraphStyle
-                let prefix = storage.attributedSubstring(from:list.prefix)
-                // Keep the first line's source indentation; align soft wraps after its prefix.
-                style.headIndent = style.firstLineHeadIndent + prefix.size().width
-                storage.addAttribute(.paragraphStyle,value:style,range:list.range)
+            var links: [StorageRun] = result.tags.map { StorageRun(range:$0.range,value:"memoize-tag:" + $0.value) }
+            links += result.links.map { StorageRun(range:$0.range,value:$0.destination) }
+            links.sort { $0.range.location < $1.range.location }
+            var currentLinks: [StorageRun] = []
+            storage.enumerateAttribute(.link,in:fullRange) { value,range,_ in
+                if let value = value as? String { currentLinks.append(StorageRun(range:range,value:value)) }
             }
-            storage.endEditing()
-            if registered { undo?.enableUndoRegistration() }
+            let indents = result.listParagraphs.map { list in
+                // Keep the first line's source indentation; align soft wraps after its prefix.
+                StorageRun(range:list.range,value:String(Double(paragraph.firstLineHeadIndent + storage.attributedSubstring(from:list.prefix).size().width)))
+            }
+            var currentIndents: [StorageRun] = []
+            storage.enumerateAttribute(.paragraphStyle,in:fullRange) { value,range,_ in
+                if let style = value as? NSParagraphStyle, style.headIndent != paragraph.headIndent {
+                    currentIndents.append(StorageRun(range:range,value:String(Double(style.headIndent))))
+                }
+            }
+            let relink = StorageRun.coalesced(links) != currentLinks, reindent = StorageRun.coalesced(indents) != currentIndents
+            if relink || reindent {
+                let undo = textView.undoManager; let registered = undo?.isUndoRegistrationEnabled == true
+                if registered { undo?.disableUndoRegistration() }
+                storage.beginEditing()
+                if relink {
+                    storage.removeAttribute(.link,range:fullRange)
+                    storage.removeAttribute(.underlineStyle,range:fullRange)
+                    storage.removeAttribute(.toolTip,range:fullRange)
+                    for tag in result.tags { storage.addAttribute(.link,value:"memoize-tag:" + tag.value,range:tag.range) }
+                    for link in result.links {
+                        storage.addAttribute(.link,value:link.destination,range:link.range)
+                        storage.addAttribute(.underlineStyle,value:NSUnderlineStyle.single.rawValue,range:link.range)
+                        storage.addAttribute(.toolTip,value:"⌘-click to open " + link.destination,range:link.range)
+                    }
+                }
+                if reindent {
+                    storage.addAttribute(.paragraphStyle,value:paragraph,range:fullRange)
+                    for indent in indents {
+                        let style = paragraph.mutableCopy() as! NSMutableParagraphStyle
+                        style.headIndent = CGFloat(Double(indent.value)!)
+                        storage.addAttribute(.paragraphStyle,value:style,range:indent.range)
+                    }
+                }
+                storage.endEditing()
+                if registered { undo?.enableUndoRegistration() }
+            }
         }
         guard let manager = textView.textLayoutManager, let content = manager.textContentManager else { return }
         let start = content.documentRange.location

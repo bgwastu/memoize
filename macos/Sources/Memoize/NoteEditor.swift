@@ -14,6 +14,9 @@ final class SourceTextView: NSTextView {
         if item.action == #selector(performTextFinderAction(_:)), let action = NSTextFinder.Action(rawValue:item.tag) {
             return noteFinder.finder.validateAction(action)
         }
+        if let action = item.action, Self.lineActions.contains(action) {
+            return (isEditable || action == #selector(selectWholeLine(_:))) && !hasMarkedText() && selectedRanges.count == 1
+        }
         return super.validateUserInterfaceItem(item)
     }
     override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
@@ -47,7 +50,6 @@ final class SourceTextView: NSTextView {
     }
     var onImage: ((Data,String,String) -> Void)?
     var onFile: ((URL) -> Void)?
-    var navigate: ((Int) -> Void)?
     var globalSearch: (() -> Void)?
     /// Return true when the empty note was handled. Return false to delete a remaining character.
     var onEmptyBackspace: (() -> Bool)?
@@ -116,11 +118,30 @@ final class SourceTextView: NSTextView {
         }
         super.mouseDown(with:event)
     }
-    override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command {
-            if event.charactersIgnoringModifiers == "[" { navigate?(1); return }
-            if event.charactersIgnoringModifiers == "]" { navigate?(-1); return }
+    static let lineActions: Set<Selector> = [#selector(moveLinesUp(_:)),#selector(moveLinesDown(_:)),#selector(copyLinesUp(_:)),#selector(copyLinesDown(_:)),
+        #selector(deleteLines(_:)),#selector(insertLineBelow(_:)),#selector(insertLineAbove(_:)),#selector(selectWholeLine(_:)),#selector(indentLines(_:)),#selector(outdentLines(_:))]
+    @objc func moveLinesUp(_ sender: Any?) { lineEdit("Move Line Up") { MarkdownLineEditing.moveLines(in:$0,selection:$1,up:true) } }
+    @objc func moveLinesDown(_ sender: Any?) { lineEdit("Move Line Down") { MarkdownLineEditing.moveLines(in:$0,selection:$1,up:false) } }
+    @objc func copyLinesUp(_ sender: Any?) { lineEdit("Copy Line Up") { MarkdownLineEditing.copyLines(in:$0,selection:$1,down:false) } }
+    @objc func copyLinesDown(_ sender: Any?) { lineEdit("Copy Line Down") { MarkdownLineEditing.copyLines(in:$0,selection:$1,down:true) } }
+    @objc func deleteLines(_ sender: Any?) { lineEdit("Delete Line") { MarkdownLineEditing.deleteLines(in:$0,selection:$1) } }
+    @objc func insertLineBelow(_ sender: Any?) { lineEdit("Insert Line Below") { MarkdownLineEditing.insertLine(in:$0,selection:$1,above:false) } }
+    @objc func insertLineAbove(_ sender: Any?) { lineEdit("Insert Line Above") { MarkdownLineEditing.insertLine(in:$0,selection:$1,above:true) } }
+    @objc func indentLines(_ sender: Any?) { lineEdit("Indent") { MarkdownLineEditing.indent(in:$0,selection:$1,outdent:false) } }
+    @objc func outdentLines(_ sender: Any?) { lineEdit("Outdent") { MarkdownLineEditing.indent(in:$0,selection:$1,outdent:true) } }
+    @objc func selectWholeLine(_ sender: Any?) {
+        guard !hasMarkedText(), selectedRanges.count == 1, let range = MarkdownLineEditing.selectLine(in:string,selection:selectedRange()) else { return }
+        setSelectedRange(range); scrollRangeToVisible(range)
+    }
+    private func lineEdit(_ name: String, _ make: (String,NSRange) -> MarkdownLineEditing.Edit?) {
+        guard isEditable, !hasMarkedText(), selectedRanges.count == 1, let edit = make(string,selectedRange()),
+              (string as NSString).substring(with:edit.range) != edit.replacement else { return }
+        withUndoGroup(name) {
+            replaceSelectedLines(edit.range,with:edit.replacement,selection:edit.selection,undoSelection:selectedRange())
         }
+        scrollRangeToVisible(edit.selection)
+    }
+    override func keyDown(with event: NSEvent) {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command,.shift], event.charactersIgnoringModifiers?.lowercased() == "f" { globalSearch?(); return }
         super.keyDown(with:event)
     }

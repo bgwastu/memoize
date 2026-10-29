@@ -166,7 +166,11 @@ private struct ShortcutSettings: View {
             }
             Section("While writing") {
                 shortcut("New note","⌘N")
-                shortcut("Older / newer note","⌘[ / ⌘]")
+                shortcut("Older / newer note","⌥⌘← / ⌥⌘→")
+                shortcut("Indent / outdent","⌘] / ⌘[")
+                shortcut("Move / copy line","⌥↑↓ / ⇧⌥↑↓")
+                shortcut("Delete / select line","⇧⌘K / ⌘L")
+                shortcut("Insert line below / above","⌘↩ / ⇧⌘↩")
                 shortcut("Find in note","⌘F")
                 shortcut("Search all notes","⇧⌘F")
                 shortcut("Toggle notes list","⌘0")

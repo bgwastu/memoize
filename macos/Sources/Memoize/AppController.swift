@@ -161,7 +161,6 @@ import Sparkle
         setPinnedWindows(editor.panel.level == .floating)
         editor.onTag = { [weak self] in self?.library.filter($0) }
         editor.onReferences = { [weak self] in self?.updateAttachments($0) }
-        editor.textView.navigate = { [weak self] in self?.navigate($0) }
         editor.textView.globalSearch = { [weak self] in self?.library.show(searching:true) }
         editor.textView.onImage = { [weak self] data,name,mime in self?.insertAttachment(data,name:name,mime:mime) }
         editor.textView.onFile = { [weak self] url in
@@ -928,9 +927,20 @@ import Sparkle
             let find = NSMenuItem(title:title,action:#selector(NSResponder.performTextFinderAction(_:)),keyEquivalent:key); find.tag = action.rawValue; find.target = editor.textView; edit.addItem(find)
         }
         edit.addItem(item("Search All Notes…",#selector(globalSearchAction),"f",[.command,.shift]))
+        let line = NSMenu(title:"Line")
+        func key(_ scalar: Int) -> String { String(UnicodeScalar(UInt16(scalar))!) }
+        for (title,selector,keyEquivalent,modifiers) in [
+            ("Indent",#selector(SourceTextView.indentLines(_:)),"]",NSEvent.ModifierFlags.command),("Outdent",#selector(SourceTextView.outdentLines(_:)),"[",.command),
+            ("Move Line Up",#selector(SourceTextView.moveLinesUp(_:)),key(NSUpArrowFunctionKey),.option),("Move Line Down",#selector(SourceTextView.moveLinesDown(_:)),key(NSDownArrowFunctionKey),.option),
+            ("Copy Line Up",#selector(SourceTextView.copyLinesUp(_:)),key(NSUpArrowFunctionKey),[.option,.shift]),("Copy Line Down",#selector(SourceTextView.copyLinesDown(_:)),key(NSDownArrowFunctionKey),[.option,.shift]),
+            ("Insert Line Below",#selector(SourceTextView.insertLineBelow(_:)),"\r",.command),("Insert Line Above",#selector(SourceTextView.insertLineAbove(_:)),"\r",[.command,.shift]),
+            ("Delete Line",#selector(SourceTextView.deleteLines(_:)),"k",[.command,.shift]),("Select Line",#selector(SourceTextView.selectWholeLine(_:)),"l",.command)] {
+            let action = NSMenuItem(title:title,action:selector,keyEquivalent:keyEquivalent); action.keyEquivalentModifierMask = modifiers; line.addItem(action)
+        }
+        let lineItem = NSMenuItem(title:"Line",action:nil,keyEquivalent:""); lineItem.submenu = line; edit.addItem(.separator()); edit.addItem(lineItem)
         let editItem = NSMenuItem(title:"Edit",action:nil,keyEquivalent:""); editItem.submenu = edit; menu.addItem(editItem)
         let window = NSMenu(title:"Window"); window.addItem(item("All Notes",#selector(libraryAction),"0"))
-        window.addItem(item("Older Note",#selector(olderAction),"[")); window.addItem(item("Newer Note",#selector(newerAction),"]"))
+        window.addItem(item("Older Note",#selector(olderAction),key(NSLeftArrowFunctionKey),[.command,.option])); window.addItem(item("Newer Note",#selector(newerAction),key(NSRightArrowFunctionKey),[.command,.option]))
         window.addItem(.separator())
         window.addItem(item("Cycle Through Windows",#selector(cycleWindow),"`"))
         let reverseCycle = item("Cycle Through Windows",#selector(cycleWindow),"`",[.command,.shift])

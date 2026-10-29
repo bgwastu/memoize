@@ -47,7 +47,11 @@ If macOS blocks the first launch, choose **System Settings → Privacy & Securit
 | ⌥⌘X | Show or hide Memoize; configurable |
 | ⌥⌘L | Show or hide the notes list; configurable |
 | ⌘N | New note |
-| ⌘[ / ⌘] | Older / newer note; past newest opens a blank draft |
+| ⌥⌘← / ⌥⌘→ | Older / newer note; past newest opens a blank draft |
+| ⌘] / ⌘[ | Indent / outdent |
+| ⌥↑ / ⌥↓, ⇧⌥↑ / ⇧⌥↓ | Move / copy line up or down |
+| ⇧⌘K, ⌘L | Delete / select line |
+| ⌘↩ / ⇧⌘↩ | Insert line below / above |
 | ⌘F / ⇧⌘F | Find in note / search all notes |
 | ⌘` | Switch between notes list and editor |
 | ⌘0 | Toggle the notes list |

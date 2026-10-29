@@ -28,6 +28,7 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityEvent
@@ -169,7 +170,12 @@ internal fun NativeSourceField(state: NativeSourceState, enabled: Boolean, modif
         type.letterSpacing.value / type.fontSize.value, colors.onSurface.toArgb(), colors.onSurfaceVariant.toArgb(),
         selection.handleColor.toArgb(), selection.backgroundColor.toArgb())
     AndroidView(modifier = modifier, factory = { context ->
-        NativeSourceView(context).also { view -> state.attach(view); view.present(presentation) }
+        NativeSourceView(context).also { view ->
+            // Compose gives interop children WRAP_CONTENT params. TextView then requests layout on every
+            // span change, and each remeasure brings the cursor back into view, undoing the user's scroll.
+            view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            state.attach(view); view.present(presentation)
+        }
     }, onRelease = state::detach,
         update = { view -> view.isEnabled = enabled; view.present(presentation) })
 }
@@ -662,6 +668,11 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     fun style(display: DisplayStyles, palette: SourcePalette) {
         if (display.input !== revision || (styled == (display to palette) && styledSelection == range())) return
         val body = text ?: return
+        // Spans leaving the window above the viewport rewrap their paragraphs; keep the top line still.
+        val anchor = layout?.takeIf { scrollY > 0 }?.let { result ->
+            val line = result.getLineForVertical(scrollY - totalPaddingTop)
+            result.getLineStart(line) to scrollY - result.getLineTop(line)
+        }
         decorating = true
         try {
             val previous = if (styled?.second == palette && styled?.first?.input === display.input) derivedKeyed else HashMap<DerivedKey, List<Any>>().also {
@@ -704,6 +715,11 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
             styled = display to palette
             styledSelection = range()
         } finally { decorating = false }
+        val result = layout
+        if (anchor != null && result != null && anchor.first <= body.length) {
+            val target = result.getLineTop(result.getLineForOffset(anchor.first)) + anchor.second
+            if (target != scrollY) scrollTo(scrollX, target.coerceIn(0, maxOf(0, result.height + totalPaddingTop + totalPaddingBottom - height)))
+        }
     }
 
     private data class ListDrag(val source: String, val offset: Int, val x: Float, val y: Float, val time: Long, var claimed: Boolean = false)
@@ -712,6 +728,9 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     private var tapDownX = 0f
     private var tapDownY = 0f
     private var tapDownTime = 0L
+    private var touching = false
+    // ArrowKeyMovementMethod drags the cursor onto the screen after every touch scroll; leave it where the user put it.
+    override fun moveCursorToVisibleOffset(): Boolean = if (touching) false else super.moveCursorToVisibleOffset()
     override fun performClick(): Boolean = super.performClick()
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val config = ViewConfiguration.get(context)
@@ -792,7 +811,8 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
             }
             MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> { drag = null; dragPending = false; parent?.requestDisallowInterceptTouchEvent(false) }
         }
-        val handled = super.onTouchEvent(event)
+        touching = true
+        val handled = try { super.onTouchEvent(event) } finally { touching = false }
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return handled
     }

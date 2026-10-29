@@ -1,6 +1,7 @@
 package net.wastu.memoize.ui
 
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -27,6 +28,7 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -37,7 +39,9 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.TextAttribute
+import android.widget.EdgeEffect
 import android.widget.EditText
+import android.widget.OverScroller
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -477,7 +481,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     private fun refreshRevision() {
         if (!dirty) return
         val current = requireNotNull(text).toString()
-        if (current != revision) { revision = current; styled = null }
+        if (current != revision) { stopFling(); revision = current; styled = null }
         dirty = false
     }
     fun snapshot(): EditSnapshot {
@@ -763,7 +767,8 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
         val result = layout
         if (anchor != null && result != null && anchor.first <= body.length) {
             val target = result.getLineTop(result.getLineForOffset(anchor.first)) + anchor.second
-            if (target != scrollY) scrollTo(scrollX, target.coerceIn(0, maxOf(0, result.height + totalPaddingTop + totalPaddingBottom - height)))
+            val clamped = target.coerceIn(0, maxScroll())
+            if (clamped != scrollY) { flingOffset += clamped - scrollY; scrollTo(scrollX, clamped) }
         }
     }
 
@@ -774,6 +779,118 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     private var tapDownY = 0f
     private var tapDownTime = 0L
     private var touching = false
+
+    // TextView's drag scrolling stops dead on release and has no edge effect; add the platform's fling and stretch.
+    private val scroller = OverScroller(context)
+    private var flingOffset = 0
+    private var velocity: VelocityTracker? = null
+    private val topEdge = EdgeEffect(context)
+    private val bottomEdge = EdgeEffect(context)
+    private var scrollGesture = false
+    private var stoppedFling = false
+    private var lastTouchY = 0f
+    private fun maxScroll() = maxOf(0, (layout?.height ?: 0) + totalPaddingTop + totalPaddingBottom - height)
+    private fun stopFling() { if (!scroller.isFinished) scroller.abortAnimation() }
+    private fun fling(velocityY: Int) {
+        val max = maxScroll()
+        if (max == 0) return
+        flingOffset = 0
+        scroller.fling(scrollX, scrollY, 0, velocityY, scrollX, scrollX, 0, max)
+        postInvalidateOnAnimation()
+    }
+    override fun computeScroll() {
+        if (scroller.isFinished || !scroller.computeScrollOffset()) { super.computeScroll(); return }
+        val max = maxScroll()
+        val y = (scroller.currY + flingOffset).coerceIn(0, max)
+        if (y != scrollY) scrollTo(scrollX, y)
+        val speed = scroller.currVelocity.toInt()
+        val up = scroller.finalY < scroller.startY
+        if (!scroller.isFinished && ((up && y == 0) || (!up && y == max))) {
+            // Hand the remaining momentum to the edge so a fling ends with the stretch bounce.
+            (if (up) topEdge else bottomEdge).onAbsorb(speed)
+            scroller.abortAnimation()
+        }
+        postInvalidateOnAnimation()
+    }
+    override fun draw(canvas: Canvas) {
+        super.draw(canvas)
+        if (!topEdge.isFinished) {
+            val count = canvas.save()
+            canvas.translate(scrollX.toFloat(), scrollY.toFloat())
+            topEdge.setSize(width, height)
+            if (topEdge.draw(canvas)) postInvalidateOnAnimation()
+            canvas.restoreToCount(count)
+        }
+        if (!bottomEdge.isFinished) {
+            val count = canvas.save()
+            canvas.translate((scrollX - width).toFloat(), (scrollY + height).toFloat())
+            canvas.rotate(180f, width.toFloat(), 0f)
+            bottomEdge.setSize(width, height)
+            if (bottomEdge.draw(canvas)) postInvalidateOnAnimation()
+            canvas.restoreToCount(count)
+        }
+    }
+    private fun releaseEdges() {
+        topEdge.onRelease(); bottomEdge.onRelease()
+        if (!topEdge.isFinished || !bottomEdge.isFinished) postInvalidateOnAnimation()
+    }
+    /** Tracks a vertical touch scroll; returns true when a touch that only stopped a fling must not reach the text. */
+    private fun trackScroll(event: MotionEvent, config: ViewConfiguration): Boolean {
+        val tracker = velocity ?: VelocityTracker.obtain().also { velocity = it }
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) tracker.clear()
+        tracker.addMovement(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                stoppedFling = !scroller.isFinished
+                stopFling()
+                scrollGesture = false
+                lastTouchY = event.y
+                if (topEdge.distance > 0f || bottomEdge.distance > 0f) scrollGesture = true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!scrollGesture && event.pointerCount == 1 && abs(event.y - tapDownY) > config.scaledTouchSlop &&
+                    event.eventTime - tapDownTime < ViewConfiguration.getLongPressTimeout()) scrollGesture = true
+            }
+            MotionEvent.ACTION_UP -> if (stoppedFling && !scrollGesture && abs(event.x - tapDownX) <= config.scaledTouchSlop &&
+                abs(event.y - tapDownY) <= config.scaledTouchSlop) {
+                // Like any scrolling list, the touch that stops a fling neither moves the caret nor opens a link.
+                MotionEvent.obtain(event).also { cancel -> cancel.action = MotionEvent.ACTION_CANCEL; touching = true
+                    try { super.onTouchEvent(cancel) } finally { touching = false }; cancel.recycle() }
+                velocity?.recycle(); velocity = null
+                return true
+            }
+        }
+        return false
+    }
+    private fun finishScroll(event: MotionEvent, config: ViewConfiguration) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                val delta = lastTouchY - event.y
+                lastTouchY = event.y
+                if (!scrollGesture || drag?.claimed == true) return
+                // Touch only cancels the long press when the view really scrolls; a drag that just stretches the edge must not select.
+                cancelLongPress()
+                val max = maxScroll()
+                val x = if (width > 0) event.x / width else 0.5f
+                // TextView clamps the drag at either end; pull the stretch with what it could not scroll.
+                if (delta < 0 && scrollY == 0) topEdge.onPullDistance(-delta / height, x)
+                else if (delta > 0 && scrollY >= max) bottomEdge.onPullDistance(delta / height, 1f - x)
+                else if (topEdge.distance > 0f || bottomEdge.distance > 0f) releaseEdges()
+                if (!topEdge.isFinished || !bottomEdge.isFinished) postInvalidateOnAnimation()
+            }
+            MotionEvent.ACTION_UP -> {
+                val tracker = velocity
+                if (scrollGesture && tracker != null && drag == null) {
+                    tracker.computeCurrentVelocity(1000, config.scaledMaximumFlingVelocity.toFloat())
+                    val speed = tracker.yVelocity
+                    if (abs(speed) >= config.scaledMinimumFlingVelocity && topEdge.distance == 0f && bottomEdge.distance == 0f) fling(-speed.toInt())
+                }
+                releaseEdges()
+                velocity?.recycle(); velocity = null
+            }
+            MotionEvent.ACTION_CANCEL -> { releaseEdges(); velocity?.recycle(); velocity = null }
+        }
+    }
     // ArrowKeyMovementMethod drags the cursor onto the screen after every touch scroll; leave it where the user put it.
     override fun moveCursorToVisibleOffset(): Boolean = if (touching) false else super.moveCursorToVisibleOffset()
     override fun performClick(): Boolean = super.performClick()
@@ -783,6 +900,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
             MotionEvent.ACTION_DOWN -> {
                 drag = null
                 tapDownX = event.x; tapDownY = event.y; tapDownTime = event.eventTime
+                if (trackScroll(event, config)) return true
                 // The list-marker lookup parses the document above the touch, so it is deferred
                 // until the finger actually moves sideways; a plain vertical scroll never pays for it.
                 dragPending = canCommand() && range().collapsed && event.x >= 8 * resources.displayMetrics.density
@@ -800,6 +918,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
                 }
             }
         }
+        if (event.actionMasked != MotionEvent.ACTION_DOWN && trackScroll(event, config)) return true
         when (event.actionMasked) {
             MotionEvent.ACTION_MOVE -> drag?.let { candidate ->
                 val dx = event.x - candidate.x
@@ -858,6 +977,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
         }
         touching = true
         val handled = try { super.onTouchEvent(event) } finally { touching = false }
+        finishScroll(event, config)
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return handled
     }

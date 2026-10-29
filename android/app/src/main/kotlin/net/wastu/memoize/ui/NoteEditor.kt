@@ -236,14 +236,20 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
     }
     LaunchedEffect(state, query) {
         var styledInput: CharSequence? = null
+        var styledWindow = IntRange.EMPTY
         snapshotFlow {
             Triple(state.text, state.viewport.min / 512 * 512, (state.viewport.max + 511) / 512 * 512)
         }.mapLatest { (input, start, end) ->
-            // Wait out a fling; a newer window cancels this one before any parsing or span churn.
-            // Edits restyle at once so typed Markdown never shows a stale frame.
-            if (input === styledInput) delay(120)
+            // Edits restyle at once with a narrow window so typed Markdown never shows a stale frame.
+            // Scrolling restyles a wider band, and only waits while the screen is still inside the
+            // styled one; a fling that reaches plain text restyles mid-flight instead of at the end.
+            val scrolled = input === styledInput
+            if (scrolled && start >= styledWindow.first && end <= styledWindow.last) delay(120)
+            val margin = if (scrolled) 2_048 else 0
             styledInput = input
-            withContext(Dispatchers.Default) { sourceStyles(input, query, start, end) }
+            withContext(Dispatchers.Default) { sourceStyles(input, query, start - margin, end + margin) }.also {
+                styledWindow = (start - margin - 512).coerceAtLeast(0)..(end + margin + 512)
+            }
         }.collect { styles ->
             display[0] = styles
             if (styles.input === state.text && styles.query == query) currentPalette.value?.let { state.style(styles, it) }

@@ -50,6 +50,10 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.material3.FabPosition
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.ui.unit.Dp
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MediumExtendedFloatingActionButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -511,6 +515,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                         },
                         onTagClick = { tag = it },
                         isRefreshing = isRefreshing,
+                        loading = loadedResults == null,
                         onRefresh = {
                             scope.launch {
                                 manualRefreshing = true
@@ -604,6 +609,7 @@ private fun NotesList(
     onTagClick: (String) -> Unit,
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
+    loading: Boolean = false,
 ) {
     val taskScope = rememberCoroutineScope()
     val query = filter.query
@@ -620,6 +626,13 @@ private fun NotesList(
                 Modifier.align(Alignment.TopCenter).padding(top = padding.calculateTopPadding()))
         }
     ) {
+        // Opening the encrypted store can take a moment; do not claim the list is empty before it answers.
+        if (results.isEmpty() && loading) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                LoadingIndicator(Modifier.semantics { contentDescription = "Loading notes" })
+            }
+            return@PullToRefreshBox
+        }
         if (results.isEmpty()) {
             BoxWithConstraints(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 val fontScale = LocalDensity.current.fontScale
@@ -820,6 +833,8 @@ private fun NotesList(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
+                                    // Pills stay compact like the previous clickable labels; 48dp minimums would space wrapped rows apart.
+                                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
                                     for (t in note.tags) {
                                         Surface(
                                             onClick = { onTagClick(t) },
@@ -831,9 +846,10 @@ private fun NotesList(
                                             Text(
                                                 text = "#$t",
                                                 style = MaterialTheme.typography.labelMedium,
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                             )
                                         }
+                                    }
                                     }
                                 }
                             }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -88,24 +89,13 @@ fun FilterSheet(
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            NoteSort.entries.forEach { sort ->
-                                FilterChip(
-                                    selected = filter.sort == sort,
-                                    onClick = { onChange(filter.copy(sort = sort)) },
-                                    label = {
-                                        Text(when (sort) {
-                                            NoteSort.NEWEST -> "Newest"
-                                            NoteSort.OLDEST -> "Oldest"
-                                            NoteSort.UPDATED -> "Recently updated"
-                                        })
-                                    }
-                                )
+                        ConnectedChoices(NoteSort.entries, filter.sort, { sort ->
+                            when (sort) {
+                                NoteSort.NEWEST -> "Newest"
+                                NoteSort.OLDEST -> "Oldest"
+                                NoteSort.UPDATED -> "Updated"
                             }
-                        }
+                        }) { onChange(filter.copy(sort = it)) }
                     }
                 }
                 columnsContent?.let { content -> item { content() } }
@@ -116,17 +106,8 @@ fun FilterSheet(
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            NoteState.entries.forEach { state ->
-                                FilterChip(
-                                    selected = filter.state == state,
-                                    onClick = { onChange(filter.copy(state = state)) },
-                                    label = { Text(if (state == NoteState.NORMAL) "Active" else "Archived") }
-                                )
-                            }
+                        ConnectedChoices(NoteState.entries, filter.state, { if (it == NoteState.NORMAL) "Active" else "Archived" }) {
+                            onChange(filter.copy(state = it))
                         }
                     }
                 }
@@ -137,24 +118,13 @@ fun FilterSheet(
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            AttachmentFilter.entries.forEach { attachment ->
-                                FilterChip(
-                                    selected = filter.attachments == attachment,
-                                    onClick = { onChange(filter.copy(attachments = attachment)) },
-                                    label = {
-                                        Text(when (attachment) {
-                                            AttachmentFilter.ANY -> "Any"
-                                            AttachmentFilter.IMAGES -> "Images"
-                                            AttachmentFilter.FILES -> "Files"
-                                        })
-                                    }
-                                )
+                        ConnectedChoices(AttachmentFilter.entries, filter.attachments, { attachment ->
+                            when (attachment) {
+                                AttachmentFilter.ANY -> "Any"
+                                AttachmentFilter.IMAGES -> "Images"
+                                AttachmentFilter.FILES -> "Files"
                             }
-                        }
+                        }) { onChange(filter.copy(attachments = it)) }
                     }
                 }
                 if (tags.isNotEmpty()) {
@@ -192,7 +162,7 @@ fun FilterSheet(
                     .padding(vertical = 16.dp),
                 horizontalArrangement = Arrangement.End
             ) {
-                Button(onClick = onDismiss, Modifier.fillMaxWidth()) {
+                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shapes = ButtonDefaults.shapes()) {
                     Text("Apply")
                 }
             }

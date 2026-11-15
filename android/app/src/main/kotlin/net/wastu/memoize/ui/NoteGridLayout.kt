@@ -93,16 +93,9 @@ internal fun Modifier.noteGridPinch(columns: Int, maximum: Int, onColumnsChange:
 
 @Composable
 internal fun NoteColumnChoices(columns: Int, maximum: Int, onChange: (Int) -> Unit) {
-    Column(Modifier.fillMaxWidth().selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Columns", Modifier.padding(start = 8.dp).semantics { heading() },
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Columns", Modifier.semantics { heading() },
             style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        for (count in 1..maximum) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                .selectable(selected = columns == count, role = Role.RadioButton, onClick = { onChange(count) })
-                .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(selected = columns == count, onClick = null)
-                Text(if (count == 1) "1 column" else "$count columns", Modifier.padding(start = 8.dp))
-            }
-        }
+        ConnectedChoices((1..maximum).toList(), columns, { it.toString() }, onChange)
     }
 }

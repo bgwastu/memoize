@@ -26,7 +26,7 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.actionStartActivity
-import androidx.glance.appwidget.components.CircleIconButton
+import androidx.glance.appwidget.components.SquareIconButton
 import androidx.glance.appwidget.components.Scaffold
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.lazy.LazyColumn
@@ -142,7 +142,7 @@ private fun NotesWidgetContent(notes: List<WidgetRow>, tag: String?) {
                         Box(
                             modifier = GlanceModifier
                                 .background(GlanceTheme.colors.secondaryContainer)
-                                .cornerRadius(8.dp)
+                                .cornerRadius(12.dp)
                                 .padding(horizontal = 8.dp, vertical = 2.dp)
                         ) {
                             Text(
@@ -157,13 +157,13 @@ private fun NotesWidgetContent(notes: List<WidgetRow>, tag: String?) {
                         }
                     }
                 }
-                CircleIconButton(
+                SquareIconButton(
                     imageProvider = ImageProvider(R.drawable.ic_add),
                     contentDescription = context.getString(R.string.widget_add),
                     onClick = actionStartActivity(addIntent(context, tag)),
-                    modifier = GlanceModifier.size(40.dp),
-                    backgroundColor = GlanceTheme.colors.primaryContainer,
-                    contentColor = GlanceTheme.colors.onPrimaryContainer
+                    modifier = GlanceModifier.size(44.dp),
+                    backgroundColor = GlanceTheme.colors.primary,
+                    contentColor = GlanceTheme.colors.onPrimary
                 )
             }
             LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
@@ -205,8 +205,8 @@ private fun NoteWidgetCard(note: WidgetRow, compact: Boolean, modifier: GlanceMo
         .format(Instant.ofEpochMilli(note.createdAt).atZone(ZoneId.systemDefault())) else date
     Column(
         modifier
-            .background(GlanceTheme.colors.surfaceVariant)
-            .cornerRadius(16.dp)
+            .background(GlanceTheme.colors.secondaryContainer)
+            .cornerRadius(20.dp)
             .clickable(actionStartActivity(noteIntent(context, note.id)))
             .padding(if (compact) 8.dp else 12.dp)
             .semantics { contentDescription = "${note.title}, $date" }
@@ -216,7 +216,7 @@ private fun NoteWidgetCard(note: WidgetRow, compact: Boolean, modifier: GlanceMo
                 note.title,
                 maxLines = if (compact) 2 else 3,
                 style = TextStyle(
-                    color = GlanceTheme.colors.onSurface,
+                    color = GlanceTheme.colors.onSecondaryContainer,
                     fontWeight = FontWeight.Medium,
                     fontSize = 16.sp,
                 ),
@@ -237,14 +237,14 @@ private fun NoteWidgetCard(note: WidgetRow, compact: Boolean, modifier: GlanceMo
                 note.excerpt,
                 maxLines = 4,
                 modifier = GlanceModifier.padding(top = 6.dp),
-                style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 14.sp)
+                style = TextStyle(color = GlanceTheme.colors.onSecondaryContainer, fontSize = 14.sp)
             )
         }
         Row(GlanceModifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 visibleDate,
                 maxLines = if (compact) 1 else 2,
-                style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 11.sp),
+                style = TextStyle(color = GlanceTheme.colors.onSecondaryContainer, fontSize = 11.sp),
                 modifier = GlanceModifier.defaultWeight()
             )
             if (note.hasAttachments) {
@@ -252,7 +252,7 @@ private fun NoteWidgetCard(note: WidgetRow, compact: Boolean, modifier: GlanceMo
                 Image(
                     provider = ImageProvider(R.drawable.ic_attach),
                     contentDescription = null,
-                    colorFilter = ColorFilter.tint(GlanceTheme.colors.onSurfaceVariant),
+                    colorFilter = ColorFilter.tint(GlanceTheme.colors.onSecondaryContainer),
                     modifier = GlanceModifier.size(12.dp)
                 )
             }

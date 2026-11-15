@@ -39,6 +39,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -497,7 +498,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                     )
                     DropdownMenuItem(
                         text = { Text("Share note") },
-                        leadingIcon = { AppIcon(R.drawable.ic_public) },
+                        leadingIcon = { AppIcon(R.drawable.ic_share) },
                         onClick = {
                             menu = false
                             sharePublicModal = true
@@ -530,7 +531,7 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     DropdownMenuItem(
                         text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                        leadingIcon = { AppIcon(R.drawable.ic_close, tint = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { AppIcon(R.drawable.ic_delete, tint = MaterialTheme.colorScheme.error) },
                         onClick = {
                             menu = false
                             leaving = true
@@ -658,19 +659,22 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                 EditorFormattingBar(state, enabled = !leaving,
                     canAttach = graph.attachments != null && !attachments.busy,
                     onAttach = { state.hideKeyboard(); attachmentChoice = true })
-            } else Surface(shape = MaterialTheme.shapes.large, color = colors.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconAction(R.drawable.ic_undo, "Undo edit", !leaving && state.canUndo) { state.undo() }
-                    IconAction(R.drawable.ic_redo, "Redo edit", !leaving && state.canRedo) { state.redo() }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(enabled = graph.attachments != null && !attachments.busy && !leaving, onClick = {
-                        state.hideKeyboard()
-                        attachmentChoice = true
-                    }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Attach" }) {
-                        AppIcon(R.drawable.ic_attach)
-                        Text("Attach", Modifier.padding(start = 8.dp))
+            } else Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = CircleShape, color = colors.surfaceContainerHigh) {
+                    Row(Modifier.padding(horizontal = 4.dp)) {
+                        IconAction(R.drawable.ic_undo, "Undo edit", !leaving && state.canUndo) { state.undo() }
+                        IconAction(R.drawable.ic_redo, "Redo edit", !leaving && state.canRedo) { state.redo() }
                     }
+                }
+                Spacer(Modifier.weight(1f))
+                FilledTonalButton(enabled = graph.attachments != null && !attachments.busy && !leaving, onClick = {
+                    state.hideKeyboard()
+                    attachmentChoice = true
+                }, shapes = ButtonDefaults.shapes(),
+                    modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "Attach" }) {
+                    AppIcon(R.drawable.ic_attach)
+                    Text("Attach", Modifier.padding(start = 8.dp))
                 }
             }
         }

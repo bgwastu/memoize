@@ -3,6 +3,10 @@ package net.wastu.memoize.ui
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -44,11 +48,13 @@ internal fun EditorFormattingBar(state: NativeSourceState, enabled: Boolean, can
             selection.max <= candidate.range.end &&
             activeStyles.none { it.style == SourceStyle.CODE && selection.min >= it.range.start && selection.max <= it.range.end }
     }
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp).testTag("editorFormattingBar"),
             verticalAlignment = Alignment.CenterVertically) {
             FormattingButton(R.drawable.ic_undo, "Undo edit", enabled && state.canUndo, action = state::undo)
             FormattingButton(R.drawable.ic_redo, "Redo edit", enabled && state.canRedo, action = state::redo)
+            VerticalDivider(Modifier.height(24.dp).padding(horizontal = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
             Row(Modifier.weight(1f).horizontalScroll(actionsScroll)
                 .testTag(if (actionsScroll.isScrollInProgress) "editorFormattingActionsScrolling" else "editorFormattingActions")) {
                 FormattingButton(R.drawable.ic_format_bold, "Bold", commands, active(SourceStyle.BOLD)) {
@@ -98,7 +104,10 @@ internal fun EditorFormattingBar(state: NativeSourceState, enabled: Boolean, can
 @Composable
 private fun FormattingButton(icon: Int, description: String, enabled: Boolean, selected: Boolean = false, action: () -> Unit) {
     val inputMode = LocalInputModeManager.current.inputMode
+    // Active styles square off; presses squish further, following the expressive icon button shapes.
     IconButton(onClick = action, enabled = enabled,
+        shapes = IconButtonDefaults.shapes(shape = if (selected) MaterialTheme.shapes.medium else CircleShape,
+            pressedShape = MaterialTheme.shapes.small),
         colors = IconButtonDefaults.iconButtonColors(
             containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent,
             contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant),

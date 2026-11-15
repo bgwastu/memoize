@@ -43,7 +43,16 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.toShape
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -71,7 +80,7 @@ import net.wastu.memoize.BuildConfig
 import net.wastu.memoize.R
 import net.wastu.memoize.data.NoteRepository
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (String) -> Unit, onClose: () -> Unit) {
     val connection = graph.connection
@@ -100,12 +109,16 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
         lastServer = settings.server
     }
     BackHandler(onBack = onClose)
+    val headerScroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
-        modifier = Modifier.fillMaxSize().imePadding(),
+        modifier = Modifier.fillMaxSize().imePadding().nestedScroll(headerScroll.nestedScrollConnection),
         topBar = {
-            TopAppBar(
+            LargeFlexibleTopAppBar(
                 title = { Text("Settings") },
-                navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", action = onClose) }
+                navigationIcon = { IconAction(R.drawable.ic_back, "Back to notes", action = onClose) },
+                scrollBehavior = headerScroll,
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surface)
             )
         },
         snackbarHost = { SnackbarHost(snackbar) }
@@ -120,22 +133,30 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                     .fillMaxWidth()
                     .fillMaxHeight()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                SettingsHeading("Account")
+                Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
                 Column(
-                    Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    Modifier.fillMaxWidth().padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (settings.connected) {
-                        Text(settings.account.ifBlank { "Memos account" },
-                            style = MaterialTheme.typography.titleMedium)
-                        Text(settings.server, style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        Text("Connect Memos", style = MaterialTheme.typography.titleMedium)
-                        Text("Sync your notes across devices.", style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        val name = if (settings.connected) settings.account.ifBlank { "Memos account" } else "Connect Memos"
+                        Surface(shape = MaterialShapes.Cookie7Sided.toShape(), color = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                            Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                                if (settings.connected) Text(name.take(1).uppercase(), style = MaterialTheme.typography.titleLarge)
+                                else AppIcon(R.drawable.ic_public)
+                            }
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (settings.connected) settings.server else "Sync your notes across devices.",
+                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
                     }
 
                     if (settings.connected && status.message.isNotBlank()) {
@@ -169,14 +190,14 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                             placeholder = { Text("https://memos.example.com") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = MaterialTheme.shapes.medium
                         )
                         OutlinedSecureTextField(
                             state = token,
                             enabled = !connecting,
                             label = { Text("Access token") },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = MaterialTheme.shapes.medium
                         )
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -204,6 +225,7 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                                     }
                                 },
                                 enabled = !connecting && connection != null && server.text.isNotBlank() && token.text.isNotBlank(),
+                                shapes = ButtonDefaults.shapes(),
                                 modifier = if (!settings.connected) Modifier.fillMaxWidth() else Modifier
                             ) {
                                 if (connecting) {
@@ -235,6 +257,7 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                         ) {
                             FilledTonalButton(
                                 enabled = !status.busy && connection != null,
+                                shapes = ButtonDefaults.shapes(),
                                 onClick = {
                                     connectionError = null
                                     scope.launch {
@@ -284,16 +307,9 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                         }
                     }
                 }
+                }
 
-                Text(
-                    text = "Maintenance",
-                    modifier = Modifier
-                        .padding(start = 4.dp, top = 4.dp)
-                        .semantics { heading() },
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
+                SettingsHeading("Maintenance")
 
                 Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                     val currentStatus = updateStatus
@@ -317,6 +333,7 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                         },
                         enabled = currentStatus !is UpdateStatus.Checking && currentStatus !is UpdateStatus.Downloading && graph.updates != null,
                         shapes = ListItemDefaults.segmentedShapes(index = 0, count = 2),
+                        colors = ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                         supportingContent = {
                             when (currentStatus) {
                                 is UpdateStatus.Available -> Text(
@@ -389,6 +406,7 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                     SegmentedListItem(
                         onClick = { showRecovery = true },
                         shapes = ListItemDefaults.segmentedShapes(index = 1, count = 2),
+                        colors = ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                         supportingContent = {
                             Text(
                                 "Restore conflicted or deleted notes",
@@ -404,18 +422,13 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
                     }
                 }
 
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Memoize ${BuildConfig.VERSION_NAME}",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Memoize ${BuildConfig.VERSION_NAME}",
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -432,4 +445,10 @@ fun SettingsScreen(graph: AppGraph, snackbar: SnackbarHostState, onRestored: (St
             }
         )
     }
+}
+
+@Composable
+private fun SettingsHeading(label: String) {
+    Text(label, Modifier.padding(start = 4.dp, top = 8.dp).semantics { heading() },
+        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
 }

@@ -36,7 +36,7 @@ class MemosClientTest {
     fun listCompletesEveryPageOfActiveAndArchivedNotes() = runTest {
         val requests = CopyOnWriteArrayList<String>()
         withServer { server ->
-            server.createContext("/api/v1/memos") { exchange ->
+            server.currentApi().createContext("/api/memos") { exchange ->
                 val params = query(exchange)
                 val archived = params["state"] == "ARCHIVED"
                 requests += "${params["state"]}:${params["pageToken"]}"
@@ -56,7 +56,7 @@ class MemosClientTest {
     @Test
     fun aRepeatedPageTokenAndAFailedArchivedListNeverReturnPartialNotes() = runTest {
         withServer { server ->
-            server.createContext("/api/v1/memos") { exchange ->
+            server.currentApi().createContext("/api/memos") { exchange ->
                 exchange.respond(200, JSONObject().put("memos", JSONArray().put(memo("saved", false))).put("nextPageToken", "repeated"))
             }
             server.start()
@@ -66,7 +66,7 @@ class MemosClientTest {
             assertTrue("A repeated page must reject the entire list", failed)
         }
         withServer { server ->
-            server.createContext("/api/v1/memos") { exchange ->
+            server.currentApi().createContext("/api/memos") { exchange ->
                 if (query(exchange)["state"] == "ARCHIVED") exchange.respond(503, JSONObject())
                 else exchange.respond(200, JSONObject().put("memos", JSONArray().put(memo("saved", false))))
             }
@@ -88,7 +88,7 @@ class MemosClientTest {
             }
             other.start()
             withServer { server ->
-                server.createContext("/api/v1/auth/me") { exchange ->
+                server.createContext("/api/auth/me") { exchange ->
                     exchange.responseHeaders.add("Location", url(other) + "/credential-capture")
                     exchange.respond(302, JSONObject())
                 }
@@ -99,6 +99,35 @@ class MemosClientTest {
                 assertEquals(302, status)
                 assertTrue(received.isEmpty())
             }
+        }
+    }
+
+    @Test
+    fun legacyServersKeepApiV1AndUsageLimitsDoNotRetry() = runTest {
+        withServer { server ->
+            server.createContext("/api/v1/memos") { exchange ->
+                exchange.respond(200, JSONObject().put("memos", JSONArray().put(memo("legacy", false))))
+            }
+            server.start()
+            val result = MemosClient(url(server), "synthetic-token", "users/synthetic", true).list()
+            assertEquals(listOf("memos/legacy"), result.map { it.remoteName })
+        }
+        withServer { server ->
+            server.currentApi().createContext("/api/memos") { exchange ->
+                exchange.requestBody.use { it.readBytes() }
+                exchange.respond(429, JSONObject().put("code", 8).put("message", "quota exceeded").put("details", JSONArray()
+                    .put(JSONObject().put("@type", "type.googleapis.com/google.rpc.ErrorInfo").put("reason", "QUOTA_EXCEEDED"))
+                    .put(JSONObject().put("@type", "type.googleapis.com/google.rpc.QuotaFailure").put("violations", JSONArray()
+                        .put(JSONObject().put("subject", "users/synthetic").put("description", "You have reached the limit of 1 memos."))))))
+            }
+            server.start()
+            val error = runCatching {
+                MemosClient(url(server), "synthetic-token", "users/synthetic", true).create("quota-probe",
+                    MemoSnapshot(content = "Over the limit", createdAt = 1_800_000_000_000, updatedAt = 1_800_000_000_000))
+            }.exceptionOrNull() as MemosApiException
+            assertTrue(error.quotaExceeded)
+            assertFalse(error.retryable)
+            assertEquals("You have reached the limit of 1 memos.", error.message)
         }
     }
 
@@ -118,7 +147,7 @@ class MemosClientTest {
     fun aBusyWriteReturnsRetryAfterWithoutAutomaticallyRepeatingTheRevision() = runTest {
         withServer { server ->
             val calls = AtomicInteger()
-            server.createContext("/api/v1/memos") { exchange ->
+            server.currentApi().createContext("/api/memos") { exchange ->
                 calls.incrementAndGet()
                 exchange.requestBody.use { it.readBytes() }
                 exchange.responseHeaders.add("Retry-After", "0")
@@ -225,6 +254,10 @@ class MemosClientTest {
     private suspend fun withServer(block: suspend (HttpServer) -> Unit) {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         try { block(server) } finally { server.stop(0) }
+    }
+    /** Memos 26.10+ answers the /api probe; servers without it are treated as 0.31 (/api/v1). */
+    private fun HttpServer.currentApi(): HttpServer = apply {
+        createContext("/api/auth/me") { it.respond(200, JSONObject().put("user", JSONObject().put("name", "users/synthetic"))) }
     }
     private fun url(server: HttpServer): String = "http://127.0.0.1:${server.address.port}"
     private fun query(exchange: HttpExchange): Map<String, String> = exchange.requestURI.rawQuery.orEmpty().split('&').associate { part ->

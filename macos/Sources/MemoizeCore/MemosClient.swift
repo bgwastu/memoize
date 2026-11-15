@@ -1,11 +1,14 @@
 import Foundation
+import Synchronization
 
 public struct APIError: LocalizedError, Sendable {
     public let status: Int
     public let message: String
     public let retryAfter: TimeInterval?
+    /// Usage limits reuse 429 with ErrorInfo reason QUOTA_EXCEEDED; waiting cannot fix them.
+    public var quotaExceeded = false
     public var errorDescription: String? { message }
-    public var retryable: Bool { status == 429 || status >= 500 }
+    public var retryable: Bool { !quotaExceeded && (status == 429 || status >= 500) }
 }
 
 public protocol MemosAPI: Sendable {
@@ -26,7 +29,10 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
     }
 }
 
+/// Supports Memos 0.31 (`/api/v1`) and 26.10+ (`/api`).
 public final class MemosClient: MemosAPI, Sendable {
+    private static let currentPrefix = "api/", legacyPrefix = "api/v1/"
+    private static let prefixes = Mutex<[String: String]>([:])
     public let server: URL
     public let user: String
     private let token: String
@@ -65,8 +71,25 @@ public final class MemosClient: MemosAPI, Sendable {
         }
         return decoder
     }
-    private func request(_ path: String, method: String = "GET", query: [URLQueryItem] = [], body: Data? = nil) -> URLRequest {
-        var c = URLComponents(url: server.appending(path: "api/v1/" + path), resolvingAgainstBaseURL: false)!
+    /// Memos 26.10 moved REST from /api/v1 to /api; 0.31 answers the new path with a plain 404.
+    private func apiPrefix() async throws -> String {
+        if let prefix = Self.prefixes.withLock({ $0[server.absoluteString] }) { return prefix }
+        let (_, response) = try await session.data(for: request("auth/me", prefix: Self.currentPrefix))
+        let prefix = (response as? HTTPURLResponse)?.statusCode == 404 ? Self.legacyPrefix : Self.currentPrefix
+        Self.prefixes.withLock { $0[server.absoluteString] = prefix }
+        return prefix
+    }
+    private func call(_ path: String, method: String = "GET", query: [URLQueryItem] = [], body: Data? = nil) async throws -> Data {
+        let prefix = try await apiPrefix()
+        do { return try await data(request(path, prefix: prefix, method: method, query: query, body: body)) }
+        catch let error as APIError where error.status == 410 && prefix == Self.legacyPrefix {
+            // 410 means the server upgraded past /api/v1 without processing the request, so one replay is safe.
+            Self.prefixes.withLock { $0[server.absoluteString] = Self.currentPrefix }
+            return try await data(request(path, prefix: Self.currentPrefix, method: method, query: query, body: body))
+        }
+    }
+    private func request(_ path: String, prefix: String, method: String = "GET", query: [URLQueryItem] = [], body: Data? = nil) -> URLRequest {
+        var c = URLComponents(url: server.appending(path: prefix + path), resolvingAgainstBaseURL: false)!
         c.queryItems = query.isEmpty ? nil : query
         var request = URLRequest(url: c.url!)
         request.httpMethod = method; request.httpBody = body
@@ -78,8 +101,15 @@ public final class MemosClient: MemosAPI, Sendable {
     private func checked(_ response: URLResponse, data: Data = Data()) throws {
         guard let http = response as? HTTPURLResponse else { throw MemoizeError.message("Invalid server response.") }
         guard (200..<300).contains(http.statusCode) else {
-            let messages: [Int: String] = [401:"Token expired or invalid. Update it in Settings.",403:"The server denied this operation.",404:"This item no longer exists.",413:"The attachment exceeds the server limit.",429:"The server is busy. Memoize will retry."]
+            let messages: [Int: String] = [401:"Token expired or invalid. Update it in Settings.",403:"The server denied this operation.",404:"This item no longer exists.",410:"This server no longer accepts this request. Update Memoize.",413:"The attachment exceeds the server limit.",429:"The server is busy. Memoize will retry."]
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let details = json?["details"] as? [[String: Any]] ?? []
+            if http.statusCode == 429, details.contains(where: { $0["reason"] as? String == "QUOTA_EXCEEDED" }) {
+                let violation = details.lazy.compactMap { ($0["violations"] as? [[String: Any]])?.first?["description"] as? String }.first
+                var error = APIError(status: 429, message: violation.map { String($0.prefix(300)) } ?? "A Memos usage limit was reached. Saved work remains on this Mac.", retryAfter: nil)
+                error.quotaExceeded = true
+                throw error
+            }
             let detail = (json?["message"] as? String).map { String($0.prefix(300)) }
             throw APIError(status: http.statusCode, message: messages[http.statusCode] ?? detail ?? "Memos returned HTTP \(http.statusCode).", retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init))
         }
@@ -89,7 +119,7 @@ public final class MemosClient: MemosAPI, Sendable {
     }
     public func authenticate() async throws -> String {
         struct Response: Decodable { struct User: Decodable { let name: String }; let user: User }
-        let data = try await data(request("auth/me"))
+        let data = try await call("auth/me")
         return try JSONDecoder().decode(Response.self, from: data).user.name
     }
     public func list() async throws -> [RemoteMemo] {
@@ -99,7 +129,7 @@ public final class MemosClient: MemosAPI, Sendable {
             var pageToken = ""; var seenTokens = Set<String>()
             repeat {
                 let filter = "creator == \"" + user.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
-                let data = try await data(request("memos", query: [.init(name:"filter",value:filter), .init(name:"state",value:state), .init(name:"pageSize",value:"500"), .init(name:"orderBy",value:"create_time desc"), .init(name:"pageToken",value:pageToken)]))
+                let data = try await call("memos", query: [.init(name:"filter",value:filter), .init(name:"state",value:state), .init(name:"pageSize",value:"500"), .init(name:"orderBy",value:"create_time desc"), .init(name:"pageToken",value:pageToken)])
                 let page = try Self.decoder().decode(Page.self, from: data)
                 for note in page.memos ?? [] { notes[note.name] = note }
                 pageToken = page.nextPageToken ?? ""
@@ -109,7 +139,7 @@ public final class MemosClient: MemosAPI, Sendable {
         return Array(notes.values)
     }
     public func get(_ id: String) async throws -> RemoteMemo? {
-        do { return try Self.decoder().decode(RemoteMemo.self, from: await data(request("memos/" + id))) }
+        do { return try Self.decoder().decode(RemoteMemo.self, from: await call("memos/" + id)) }
         catch let error as APIError where error.status == 404 { return nil }
     }
     private func memoBody(_ note: RemoteMemo, creating: Bool) throws -> Data {
@@ -119,28 +149,28 @@ public final class MemosClient: MemosAPI, Sendable {
         return try JSONSerialization.data(withJSONObject: body)
     }
     public func create(_ note: RemoteMemo) async throws -> RemoteMemo {
-        try Self.decoder().decode(RemoteMemo.self, from: await data(request("memos", method:"POST", query:[.init(name:"memoId",value:String(note.name.dropFirst(6)))], body: try memoBody(note, creating:true))))
+        try Self.decoder().decode(RemoteMemo.self, from: await call("memos", method:"POST", query:[.init(name:"memoId",value:String(note.name.dropFirst(6)))], body: try memoBody(note, creating:true)))
     }
     public func update(_ note: RemoteMemo) async throws -> RemoteMemo {
-        try Self.decoder().decode(RemoteMemo.self, from: await data(request(note.name, method:"PATCH", query:[.init(name:"updateMask",value:"content,update_time,attachments")], body: try memoBody(note, creating:false))))
+        try Self.decoder().decode(RemoteMemo.self, from: await call(note.name, method:"PATCH", query:[.init(name:"updateMask",value:"content,update_time,attachments")], body: try memoBody(note, creating:false)))
     }
     public func delete(_ id: String) async throws {
-        do { _ = try await data(request("memos/" + id, method:"DELETE")) }
+        do { _ = try await call("memos/" + id, method:"DELETE") }
         catch let error as APIError where error.status == 404 { return }
     }
     public func deleteAttachment(_ id: String) async throws {
-        do { _ = try await data(request("attachments/" + id,method:"DELETE")) }
+        do { _ = try await call("attachments/" + id,method:"DELETE") }
         catch let error as APIError where error.status == 404 { return }
     }
     public func upload(_ attachment: Attachment, file: URL) async throws {
-        do { _ = try await data(request(attachment.remote.name)); return }
+        do { _ = try await call(attachment.remote.name); return }
         catch let error as APIError where error.status == 404 { }
         // Bounded chunks keep large files from producing full-size base64 copies.
         struct Upload: Decodable { let uploadId: String?; let maxChunkSize: Int?; let attachment: RemoteAttachment? }
         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         var spec: [String: Any] = ["spec":["attachment":["filename":attachment.filename,"type":attachment.mime],"totalSize":String(size)]]
         if size == 0 { spec["finishWrite"] = true }
-        let initial = try Self.decoder().decode(Upload.self, from: await data(request("attachments:upload", method:"POST", body:JSONSerialization.data(withJSONObject:spec))))
+        let initial = try Self.decoder().decode(Upload.self, from: await call("attachments:upload", method:"POST", body:JSONSerialization.data(withJSONObject:spec)))
         if initial.attachment != nil { return }
         guard let uploadID = initial.uploadId else { throw MemoizeError.message("Server did not start the file upload.") }
         let handle = try FileHandle(forReadingFrom: file); defer { try? handle.close() }
@@ -150,7 +180,7 @@ public final class MemosClient: MemosAPI, Sendable {
             let chunk = try handle.read(upToCount: min(initial.maxChunkSize ?? 1_048_576, 1_048_576)) ?? Data()
             guard !chunk.isEmpty else { throw MemoizeError.message("Attachment file ended unexpectedly.") }
             let body: [String: Any] = ["uploadId":uploadID,"writeOffset":String(offset),"data":chunk.base64EncodedString(),"finishWrite":offset + chunk.count == size]
-            _ = try await data(request("attachments:upload", method:"POST", body:JSONSerialization.data(withJSONObject:body)))
+            _ = try await call("attachments:upload", method:"POST", body:JSONSerialization.data(withJSONObject:body))
             offset += chunk.count
         }
     }
@@ -175,7 +205,7 @@ public final class MemosClient: MemosAPI, Sendable {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var r = request("sse"); r.timeoutInterval = 90
+                    var r = request("sse", prefix: try await apiPrefix()); r.timeoutInterval = 90
                     r.setValue("text/event-stream", forHTTPHeaderField:"Accept")
                     let (bytes,response) = try await eventSession.bytes(for:r); try checked(response)
                     continuation.yield(()) // Reconcile on every connection, including reconnects.

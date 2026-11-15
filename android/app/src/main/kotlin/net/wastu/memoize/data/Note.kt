@@ -3,7 +3,8 @@ package net.wastu.memoize.data
 import java.util.UUID
 
 enum class NoteState { NORMAL, ARCHIVED }
-enum class NoteVisibility { PRIVATE, PROTECTED, PUBLIC }
+/** SPACE is shown to members of the memo's Space; it round-trips unchanged. */
+enum class NoteVisibility { PRIVATE, PROTECTED, PUBLIC, SPACE }
 enum class AttachmentFilter { ANY, IMAGES, FILES }
 enum class NoteSort { NEWEST, OLDEST, UPDATED }
 enum class NoteProblem(val code: String) { CONFLICT("CONFLICT") }

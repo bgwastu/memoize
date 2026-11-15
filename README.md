@@ -36,7 +36,7 @@ Download from [GitHub Releases](https://github.com/bgwastu/memoize/releases).
 - **Mac:** macOS 26+, Apple silicon. Unzip and move Memoize.app to Applications.
 - **Android:** Android 16+. Install the APK; a notes-list widget is included.
 
-Enter your Memos URL and access token in Settings. Tested with Memos 0.31.0.
+Enter your Memos URL and access token in Settings. Works with Memos 0.31 and 26.10+ (tested with 0.31.0 and 26.11.0).
 
 If macOS blocks the first launch, choose **System Settings → Privacy & Security → Open Anyway**.
 

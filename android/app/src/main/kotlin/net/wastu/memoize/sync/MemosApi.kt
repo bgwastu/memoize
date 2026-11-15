@@ -22,7 +22,8 @@ class MemosApiException(
     val status: Int,
     message: String,
     val retryAfterMillis: Long? = null,
+    val quotaExceeded: Boolean = false,
 ) : IOException(message) {
-    val retryable: Boolean get() = status == 429 || status >= 500
+    val retryable: Boolean get() = !quotaExceeded && (status == 429 || status >= 500)
     val needsAuthentication: Boolean get() = status == 401 || status == 403
 }

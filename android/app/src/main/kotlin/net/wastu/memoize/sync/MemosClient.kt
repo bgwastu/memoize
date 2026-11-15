@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.resumeWithException
 
-/** Memos 0.31 transport. Requests never follow redirects or expose credentials to other origins. */
+/** Memos transport for 0.31 (`/api/v1`) and 26.10+ (`/api`). Requests never follow redirects or expose credentials to other origins. */
 class MemosClient(
     server: String,
     private val token: String,
@@ -170,7 +170,7 @@ class MemosClient(
     override suspend fun download(attachment: NoteAttachment, destination: File) = withContext<Unit>(Dispatchers.IO) {
         val uid = resourceId(attachment.remoteName ?: attachment.id, "attachments")
         val uri = attachment.externalLink?.takeIf { it.isNotBlank() }?.let(URI::create)
-            ?: endpoint("file/attachments/$uid/${encode(attachment.filename)}", emptyMap(), false)
+            ?: endpoint("file/attachments/$uid/${encode(attachment.filename)}", emptyMap())
         validateDownload(uri)
         destination.parentFile?.mkdirs()
         val temporary = File.createTempFile(".download-", ".partial", destination.parentFile)
@@ -228,7 +228,7 @@ class MemosClient(
             "memos/${resourceId(value.getString("name"), "memos")}", value.optString("content"), created,
             value.optString("updateTime").takeIf { it.isNotBlank() }?.let { Instant.parse(it).toEpochMilli() } ?: created,
             NoteState.valueOf(value.optString("state", "NORMAL")),
-            NoteVisibility.valueOf(value.optString("visibility", "PRIVATE")),
+            NoteVisibility.entries.firstOrNull { it.name == value.optString("visibility") } ?: NoteVisibility.PRIVATE,
             (0 until files.length()).map { attachment(files.getJSONObject(it)) },
             pinned = value.optBoolean("pinned", false),
             location = loc,
@@ -241,8 +241,29 @@ class MemosClient(
             value.optString("size", "0").toLong(), externalLink = value.optString("externalLink").takeIf { it.isNotBlank() }, uploaded = true)
     }
 
-    private suspend fun json(path: String, method: String = "GET", query: Map<String, String> = emptyMap(), body: JSONObject? = null): JSONObject =
-        request(endpoint(path, query), method, body?.toString()?.toByteArray(StandardCharsets.UTF_8), true) { response, context ->
+    private suspend fun json(path: String, method: String = "GET", query: Map<String, String> = emptyMap(), body: JSONObject? = null): JSONObject {
+        val prefix = apiPrefix()
+        return try { json(prefix, path, method, query, body) }
+        catch (error: MemosApiException) {
+            // 410 means the server upgraded past /api/v1 without processing the request, so one replay is safe.
+            if (error.status != 410 || prefix != LEGACY_PREFIX) throw error
+            prefixes[server.toASCIIString()] = CURRENT_PREFIX
+            json(CURRENT_PREFIX, path, method, query, body)
+        }
+    }
+
+    /** Memos 26.10 moved REST from /api/v1 to /api; 0.31 answers the new path with a plain 404. */
+    private suspend fun apiPrefix(): String = prefixes[server.toASCIIString()] ?: run {
+        val prefix = try {
+            request(endpoint("auth/me", emptyMap(), CURRENT_PREFIX), "GET", null, true) { _, _ -> CURRENT_PREFIX }
+        } catch (error: MemosApiException) {
+            if (error.status == 404) LEGACY_PREFIX else CURRENT_PREFIX
+        }
+        prefix.also { prefixes[server.toASCIIString()] = it }
+    }
+
+    private suspend fun json(prefix: String, path: String, method: String, query: Map<String, String>, body: JSONObject?): JSONObject =
+        request(endpoint(path, query, prefix), method, body?.toString()?.toByteArray(StandardCharsets.UTF_8), true) { response, context ->
                 val bytes = ByteArrayOutputStream()
                 response.body.byteStream().use { input ->
                     val buffer = ByteArray(16_384)
@@ -258,10 +279,10 @@ class MemosClient(
                 catch (_: JSONException) { throw IOException("Memos returned an invalid response. Sync stopped safely.") }
         }
 
-    private fun endpoint(path: String, query: Map<String, String>, api: Boolean = true): URI {
+    private fun endpoint(path: String, query: Map<String, String>, prefix: String = ""): URI {
         require(path.none { it == '?' || it == '#' } && !path.startsWith('/') && !path.split('/').contains(".."))
         val encoded = query.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
-        return URI.create("${server.toASCIIString()}/${if (api) "api/v1/" else ""}$path${if (encoded.isEmpty()) "" else "?$encoded"}")
+        return URI.create("${server.toASCIIString()}/$prefix$path${if (encoded.isEmpty()) "" else "?$encoded"}")
     }
 
     private suspend fun <T> request(uri: URI, method: String, body: ByteArray?, authenticated: Boolean,
@@ -311,7 +332,9 @@ class MemosClient(
             403 -> "The server denied this operation. Check the account in Settings."
             404 -> "This item no longer exists on the server."
             413 -> "This file exceeds the server upload limit. The original remains on this device."
-            429 -> "The server is busy. Memoize will retry."
+            410 -> "This server no longer accepts this request. Update Memoize."
+            429 -> quotaMessage(response)?.let { throw MemosApiException(status, it, quotaExceeded = true) }
+                ?: "The server is busy. Memoize will retry."
             else -> "Memos returned HTTP $status. Saved work remains on this device."
         }
         val retry = response.header("Retry-After")?.let { raw ->
@@ -320,6 +343,17 @@ class MemosClient(
         }
         throw MemosApiException(status, message, retry)
     }
+
+    /** Usage limits reuse 429 with ErrorInfo reason QUOTA_EXCEEDED; waiting cannot fix them. */
+    private fun quotaMessage(response: Response): String? = runCatching {
+        val error = JSONObject(response.peekBody(65_536).string())
+        val details = error.optJSONArray("details") ?: return null
+        val items = (0 until details.length()).mapNotNull { details.optJSONObject(it) }
+        if (items.none { it.optString("reason") == "QUOTA_EXCEEDED" }) return null
+        items.firstNotNullOfOrNull { item ->
+            item.optJSONArray("violations")?.optJSONObject(0)?.optString("description")?.takeIf { it.isNotBlank() }
+        }?.take(300) ?: "A Memos usage limit was reached. Saved work remains on this device."
+    }.getOrNull()
 
     private fun validateDownload(uri: URI) {
         require(uri.userInfo == null && uri.host != null &&
@@ -333,6 +367,9 @@ class MemosClient(
 
     companion object {
         private val JSON = "application/json; charset=utf-8".toMediaType()
+        private const val CURRENT_PREFIX = "api/"
+        private const val LEGACY_PREFIX = "api/v1/"
+        private val prefixes = java.util.concurrent.ConcurrentHashMap<String, String>()
         private val http = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
             .retryOnConnectionFailure(false).connectTimeout(30, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
         fun normalizedServer(value: String, allowLoopbackForTests: Boolean = false): URI {

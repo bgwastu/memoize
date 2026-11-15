@@ -196,7 +196,7 @@ class SyncEngine(
         val retryable = apiError == null || apiError.retryable
         val authentication = apiError?.needsAuthentication == true
         return Failure(attempts, retryable, if (retryable) deadline(backoff(attempts, apiError)) else Long.MAX_VALUE,
-            authentication, authentication || apiError?.status == 429)
+            authentication, authentication || (apiError?.status == 429 && apiError.retryable))
     }
 
     private fun backoff(attempts: Int, error: MemosApiException?): Long =

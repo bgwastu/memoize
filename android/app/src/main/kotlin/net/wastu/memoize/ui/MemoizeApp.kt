@@ -6,9 +6,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.layout.Arrangement
@@ -18,7 +15,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,10 +39,17 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExpandedFullScreenSearchBar
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.material3.FabPosition
@@ -55,7 +58,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.MaterialShapes
-import androidx.compose.material3.MediumExtendedFloatingActionButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.toShape
@@ -212,13 +214,8 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
     val resultFlow: kotlinx.coroutines.flow.Flow<List<NoteResult>?> = remember(notes, filter) { notes.observe(filter) }
     val loadedResults by resultFlow.collectAsStateWithLifecycle(null)
     val results = loadedResults.orEmpty()
-    val appBarState = rememberTopAppBarState()
-    val headerScroll = TopAppBarDefaults.pinnedScrollBehavior(appBarState)
-    LaunchedEffect(listState.canScrollBackward) {
-        if (!listState.canScrollBackward) appBarState.heightOffset = 0f
-    }
     LaunchedEffect(selecting) {
-        if (selecting) { appBarState.heightOffset = 0f; activityFocus.clearFocus(); keyboard?.hide() }
+        if (selecting) { activityFocus.clearFocus(); keyboard?.hide() }
     }
     LaunchedEffect(loadedResults) {
         if (loadedResults != null && selection.isNotEmpty()) {
@@ -234,7 +231,6 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             if (previousFilter.copy(sort = filter.sort) != filter) {
                 selection = emptyList(); selecting = false
             }
-            appBarState.heightOffset = 0f
             previousFilter = filter
             listState.scrollToItem(0)
             searchListState.scrollToItem(0)
@@ -289,13 +285,31 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
         }
     }
 
+    val screen = AppScreen(selectedId, editorKey, settings)
+    val motion = MaterialTheme.motionScheme
+    AnimatedContent(
+        targetState = screen,
+        contentKey = { it.kind },
+        transitionSpec = {
+            // Material shared-axis Z: the opened screen grows in over the list and shrinks back out on close.
+            val forward = targetState.kind.ordinal > initialState.kind.ordinal
+            val spatial = motion.defaultSpatialSpec<Float>()
+            val effects = motion.defaultEffectsSpec<Float>()
+            if (forward) (fadeIn(effects) + scaleIn(spatial, initialScale = 0.92f)) togetherWith
+                (fadeOut(motion.fastEffectsSpec()) + scaleOut(spatial, targetScale = 1.04f))
+            else ((fadeIn(effects) + scaleIn(spatial, initialScale = 1.04f)) togetherWith
+                (fadeOut(motion.fastEffectsSpec()) + scaleOut(spatial, targetScale = 0.92f)))
+                .apply { targetContentZIndex = -1f }
+        },
+        label = "screen",
+    ) { shown ->
     when {
-        selectedId != null -> NoteEditor(graph, notes, selectedId!!, query, focusEditor,
-            sessionKey = editorKey ?: selectedId!!,
+        shown.noteId != null -> NoteEditor(graph, notes, shown.noteId, query, focusEditor,
+            sessionKey = shown.editorKey ?: shown.noteId,
             onReplace = { replacement -> selectedId = replacement
                 scope.launch { snackbar.showSnackbar("Server removed the note. Your edit was saved as a new private note.") } },
             snackbar = snackbar, onClose = { selectedId = null; editorKey = null; focusEditor = false })
-        settings -> SettingsScreen(graph, snackbar, onRestored = { id ->
+        shown.settings -> SettingsScreen(graph, snackbar, onRestored = { id ->
             settings = false; selectedId = id; editorKey = id; focusEditor = false
         }, onClose = { settings = false })
         else -> {
@@ -454,17 +468,11 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             }
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             Scaffold(
-                modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().nestedScroll(createButtonScroll).nestedScroll(headerScroll.nestedScrollConnection),
+                modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().nestedScroll(createButtonScroll),
                 topBar = {
                     if (selecting) NoteSelectionBar(selection.size, batchBusy, onClose = ::exitSelection,
                         onSelectAll = { selection = results.map { it.note.id } })
-                    else TopAppBar(title = {
-                        // Mirror the app bar's title inset at the trailing edge.
-                        AppBarWithSearch(searchState, inputField = input, modifier = Modifier.padding(end = 16.dp),
-                            windowInsets = WindowInsets(0))
-                    }, scrollBehavior = headerScroll,
-                        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,
-                            scrolledContainerColor = MaterialTheme.colorScheme.surface))
+                    else AppBarWithSearch(searchState, inputField = input)
                 },
                 snackbarHost = { SnackbarHost(snackbar) },
                 floatingActionButtonPosition = if (selecting) FabPosition.Center else FabPosition.End,
@@ -481,7 +489,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                         onFilters = { filters = true },
                         onTogglePin = ::toggleSelectionPin
                     )
-                    else MediumExtendedFloatingActionButton(onClick = {
+                    else ExtendedFloatingActionButton(onClick = {
                         scope.launch {
                             try {
                                 val draft = notes.create()
@@ -556,6 +564,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                 )
             }
         }
+    }
     }
     if (filters) FilterSheet(notes, filter, onDismiss = { filters = false }, onChange = {
         tag = it.tag; attachmentType = it.attachments.name; lifecycle = it.state.name; sortOrder = it.sort.name
@@ -912,3 +921,9 @@ private fun SectionHeader(label: String) {
 }
 
 fun timestamp(time: Long): String = DateTimeFormatter.ofPattern("MMM d, HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(time))
+
+private enum class ScreenKind { NOTES, SETTINGS, EDITOR }
+
+private data class AppScreen(val noteId: String?, val editorKey: String?, val settings: Boolean) {
+    val kind get() = when { noteId != null -> ScreenKind.EDITOR; settings -> ScreenKind.SETTINGS; else -> ScreenKind.NOTES }
+}

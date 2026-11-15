@@ -1,7 +1,6 @@
 package net.wastu.memoize.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -47,7 +46,14 @@ import androidx.compose.material3.ExpandedFullScreenSearchBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.MediumExtendedFloatingActionButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.toShape
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -112,7 +118,6 @@ import net.wastu.memoize.data.NoteState
 import net.wastu.memoize.data.NoteVisibility
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.clickable
 import androidx.compose.material3.Card
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.Spacer
@@ -470,7 +475,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                 },
                 snackbarHost = { SnackbarHost(snackbar) },
                 floatingActionButton = {
-                    if (!selecting) ExtendedFloatingActionButton(onClick = {
+                    if (!selecting) MediumExtendedFloatingActionButton(onClick = {
                         scope.launch {
                             try {
                                 val draft = notes.create()
@@ -571,6 +576,7 @@ private fun CompactFilterChip(label: String, removeDescription: String, onClear:
         modifier = Modifier.minimumInteractiveComponentSize())
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun NotesList(
     results: List<NoteResult>,
@@ -601,10 +607,16 @@ private fun NotesList(
     val query = filter.query
     val filtered = filter.tag != null || filter.attachments != AttachmentFilter.ANY || filter.state != NoteState.NORMAL
 
+    val refreshState = rememberPullToRefreshState()
     PullToRefreshBox(
         isRefreshing = isRefreshing,
         onRefresh = onRefresh,
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
+        state = refreshState,
+        indicator = {
+            PullToRefreshDefaults.LoadingIndicator(refreshState, isRefreshing,
+                Modifier.align(Alignment.TopCenter).padding(top = padding.calculateTopPadding()))
+        }
     ) {
         if (results.isEmpty()) {
             BoxWithConstraints(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
@@ -621,8 +633,11 @@ private fun NotesList(
                         chips()
                         Column(Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp).padding(bottom = 88.dp),
                             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                                Box(Modifier.padding(20.dp)) { AppIcon(if (query.isNotEmpty()) R.drawable.ic_search else R.drawable.ic_file) }
+                            Surface(shape = MaterialShapes.Cookie9Sided.toShape(), color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                                Box(Modifier.size(112.dp), contentAlignment = Alignment.Center) {
+                                    Icon(painterResource(if (query.isNotEmpty()) R.drawable.ic_search else R.drawable.ic_file), null, Modifier.size(40.dp))
+                                }
                             }
                             Text(when { query.isNotEmpty() -> "No matching notes"; filtered -> "No notes match these filters"; else -> "No notes yet" },
                                 modifier = Modifier.padding(top = 20.dp), style = MaterialTheme.typography.headlineSmall)
@@ -666,20 +681,22 @@ private fun NotesList(
                         Text(results.size.toString(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                items(results, key = { result -> "note:${result.note.id}" }) { result ->
+                val sectioned = query.isEmpty() && results.first().note.pinned && results.any { !it.note.pinned }
+                if (sectioned) item(key = "section-pinned", span = StaggeredGridItemSpan.FullLine) { SectionHeader("Pinned") }
+                val firstUnpinned = results.indexOfFirst { !it.note.pinned }
+                results.forEachIndexed { index, result ->
+                if (sectioned && index == firstUnpinned) item(key = "section-notes", span = StaggeredGridItemSpan.FullLine) { SectionHeader("Notes") }
+                item(key = "note:${result.note.id}") {
                     val note = result.note
                     val checked = note.id in selection
+                    // Selected cards morph to rounder corners and a tonal fill with expressive springs.
+                    val corner by animateDpAsState(if (checked) 32.dp else 20.dp, MaterialTheme.motionScheme.fastSpatialSpec(), label = "corner")
+                    val container by animateColorAsState(
+                        if (checked) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                        MaterialTheme.motionScheme.fastEffectsSpec(), label = "container")
                     Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (checked) MaterialTheme.colorScheme.secondaryContainer
-                            else MaterialTheme.colorScheme.surfaceContainerLow
-                        ),
-                        border = BorderStroke(
-                            if (checked) 2.dp else 1.dp,
-                            if (checked) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                        ),
+                        shape = RoundedCornerShape(corner),
+                        colors = CardDefaults.cardColors(containerColor = container),
                         modifier = Modifier.fillMaxWidth().testTag("note-${note.id}")
                             .combinedClickable(
                                 enabled = enabled,
@@ -803,15 +820,16 @@ private fun NotesList(
                                 ) {
                                     for (t in note.tags) {
                                         Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                                            modifier = Modifier.clickable { onTagClick(t) }
+                                            onClick = { onTagClick(t) },
+                                            enabled = enabled && !selecting,
+                                            shape = CircleShape,
+                                            color = MaterialTheme.colorScheme.secondaryContainer,
+                                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                                         ) {
                                             Text(
                                                 text = "#$t",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                style = MaterialTheme.typography.labelMedium,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                             )
                                         }
                                     }
@@ -862,9 +880,16 @@ private fun NotesList(
                         }
                     }
                 }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun SectionHeader(label: String) {
+    Text(label, Modifier.fillMaxWidth().padding(start = 4.dp, top = 8.dp).semantics { heading() },
+        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 }
 
 fun timestamp(time: Long): String = DateTimeFormatter.ofPattern("MMM d, HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(time))

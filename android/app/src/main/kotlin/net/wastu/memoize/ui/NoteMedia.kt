@@ -115,7 +115,7 @@ fun NoteMediaGrid(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 240.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(16.dp))
                             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                             .clickable(enabled = onImageClick != null) { onImageClick?.invoke(img) }
                     ) {
@@ -141,7 +141,7 @@ fun NoteMediaGrid(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxSize()
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(16.dp))
                                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                     .clickable(enabled = onImageClick != null) { onImageClick?.invoke(img) }
                             ) {
@@ -169,7 +169,7 @@ fun NoteMediaGrid(
                             modifier = Modifier
                                 .weight(1.2f)
                                 .fillMaxSize()
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                 .clickable(enabled = onImageClick != null) { onImageClick?.invoke(first) }
                         ) {
@@ -193,7 +193,7 @@ fun NoteMediaGrid(
                                     modifier = Modifier
                                         .weight(1f)
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .clip(RoundedCornerShape(12.dp))
                                         .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                         .clickable(enabled = onImageClick != null) { onImageClick?.invoke(img) }
                                 ) {
@@ -229,7 +229,7 @@ fun NoteMediaGrid(
                                     modifier = Modifier
                                         .weight(1f)
                                         .fillMaxSize()
-                                        .clip(RoundedCornerShape(10.dp))
+                                        .clip(RoundedCornerShape(12.dp))
                                         .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                         .clickable(enabled = onImageClick != null) { onImageClick?.invoke(img) }
                                 ) {
@@ -255,7 +255,7 @@ fun NoteMediaGrid(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxSize()
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                     .clickable(enabled = onImageClick != null) { onImageClick?.invoke(third) }
                             ) {
@@ -275,7 +275,7 @@ fun NoteMediaGrid(
                                 modifier = Modifier
                                     .weight(1f)
                                     .fillMaxSize()
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                                     .clickable(enabled = onImageClick != null) { onImageClick?.invoke(fourth) }
                             ) {
@@ -443,7 +443,7 @@ fun EditorAttachmentStrip(
                 Box(
                     modifier = Modifier
                         .size(80.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                         .clickable(enabled = !busy) { onOpen(attachment) }
                 ) {
@@ -459,29 +459,29 @@ fun EditorAttachmentStrip(
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(4.dp)
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.65f))
+                            .size(48.dp)
                             .clickable(enabled = !busy) { onRemove(attachment) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_close),
-                            contentDescription = "Remove ${attachment.filename}",
-                            modifier = Modifier.size(14.dp),
-                            tint = Color.White
-                        )
+                        Box(Modifier.size(24.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.65f)),
+                            contentAlignment = Alignment.Center) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_close),
+                                contentDescription = "Remove ${attachment.filename}",
+                                modifier = Modifier.size(16.dp),
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
             } else {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     modifier = Modifier.height(64.dp).width(160.dp).clickable(enabled = !busy) { onOpen(attachment) }
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                        modifier = Modifier.fillMaxSize().padding(start = 12.dp, end = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
@@ -506,7 +506,7 @@ fun EditorAttachmentStrip(
                         }
                         Box(
                             modifier = Modifier
-                                .size(20.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
                                 .clickable(enabled = !busy) { onRemove(attachment) },
                             contentAlignment = Alignment.Center

@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
@@ -34,7 +35,7 @@ import net.wastu.memoize.data.NoteRepository
 import net.wastu.memoize.data.RecoveryRevision
 
 /** One browser for Settings and the editor; restoration remains repository-owned. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDismiss: () -> Unit,
     onRestore: suspend (RecoveryRevision) -> Unit) {
@@ -128,7 +129,7 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                     }
                     when {
                         versions == null && error == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(Modifier.semantics { contentDescription = "Loading recovery versions" })
+                            LoadingIndicator(Modifier.semantics { contentDescription = "Loading recovery versions" })
                         }
                         selected != null -> key(selected.id) { RecoveryPreview(selected, Modifier.weight(1f)) }
                         versions != null -> {
@@ -137,7 +138,7 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                                 leadingIcon = { AppIcon(R.drawable.ic_search) },
                                 trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) {
                                     AppIcon(R.drawable.ic_close, "Clear recovery search")
-                                } }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+                                } }, shape = MaterialTheme.shapes.extraLarge, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
                             val loaded = requireNotNull(versions)
                             val filtered = remember(loaded, query) {
                                 loaded.filter { query.isBlank() || it.snapshot.content.contains(query, ignoreCase = true) ||
@@ -154,14 +155,15 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                                     Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 LazyColumn(state = list, modifier = Modifier.fillMaxWidth().weight(1f).testTag("recovery-list"),
-                                    contentPadding = PaddingValues(bottom = 24.dp)) {
+                                    contentPadding = PaddingValues(bottom = 24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
                                     filtered.groupBy { it.noteId }.forEach { (id, group) ->
                                         if (noteId == null) item(key = "note-$id") {
                                             Text(recoveryTitle(group.first()), Modifier.fillMaxWidth().padding(16.dp).semantics { heading() },
                                                 style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
-                                        items(group, key = { it.id }) { version ->
-                                            ListItem(onClick = { keyboard?.hide(); selectedId = version.id; error = null },
+                                        itemsIndexed(group, key = { _, version -> version.id }) { index, version ->
+                                            SegmentedListItem(onClick = { keyboard?.hide(); selectedId = version.id; error = null },
                                                 supportingContent = {
                                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                                         Text(version.reason, style = MaterialTheme.typography.labelMedium,
@@ -172,11 +174,11 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                                                             "${version.snapshot.attachments.size} attachments", style = MaterialTheme.typography.labelSmall)
                                                     }
                                                 }, trailingContent = { AppIcon(R.drawable.ic_chevron_right) },
-                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("recovery-${version.id}")) {
+                                                shapes = ListItemDefaults.segmentedShapes(index, group.size),
+                                                colors = ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(min = 48.dp).testTag("recovery-${version.id}")) {
                                                 Text(recoveryTimestamp(version.savedAt), style = MaterialTheme.typography.titleSmall)
                                             }
-                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant,
-                                                modifier = Modifier.padding(horizontal = 16.dp))
                                         }
                                     }
                                 }

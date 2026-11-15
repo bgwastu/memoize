@@ -3,7 +3,8 @@ package net.wastu.memoize.ui
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Typography
@@ -18,22 +19,32 @@ import androidx.compose.ui.unit.dp
 private val MemoizeTypography = Typography().let {
     it.copy(
         headlineLarge = it.headlineLarge.copy(fontWeight = FontWeight.SemiBold),
+        headlineMedium = it.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+        titleLarge = it.titleLarge.copy(fontWeight = FontWeight.Medium),
         titleMedium = it.titleMedium.copy(fontWeight = FontWeight.SemiBold),
     )
 }
 
 private val MemoizeShapes = Shapes(
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(28.dp),
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(28.dp),
+    extraLarge = RoundedCornerShape(32.dp),
 )
 
+/** Wallpaper colors with Material 3 Expressive motion: springy, slightly overshooting transitions. */
 @Composable
 fun MemoizeTheme(content: @Composable () -> Unit) {
     val context = LocalContext.current
     val dark = isSystemInDarkTheme()
     val colors = if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-    MaterialTheme(colorScheme = colors, typography = MemoizeTypography, shapes = MemoizeShapes) {
+    MaterialExpressiveTheme(
+        colorScheme = colors,
+        motionScheme = MotionScheme.expressive(),
+        typography = MemoizeTypography,
+        shapes = MemoizeShapes,
+    ) {
         Surface(Modifier.fillMaxSize(), color = colors.surface, contentColor = colors.onSurface, content = content)
     }
 }

@@ -1,5 +1,7 @@
 package net.wastu.memoize.ui
 
+import androidx.core.net.toUri
+import androidx.core.graphics.withTranslation
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -815,19 +817,17 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     override fun draw(canvas: Canvas) {
         super.draw(canvas)
         if (!topEdge.isFinished) {
-            val count = canvas.save()
-            canvas.translate(scrollX.toFloat(), scrollY.toFloat())
-            topEdge.setSize(width, height)
-            if (topEdge.draw(canvas)) postInvalidateOnAnimation()
-            canvas.restoreToCount(count)
+            canvas.withTranslation(scrollX.toFloat(), scrollY.toFloat()) {
+                topEdge.setSize(width, height)
+                if (topEdge.draw(this)) postInvalidateOnAnimation()
+            }
         }
         if (!bottomEdge.isFinished) {
-            val count = canvas.save()
-            canvas.translate((scrollX - width).toFloat(), (scrollY + height).toFloat())
-            canvas.rotate(180f, width.toFloat(), 0f)
-            bottomEdge.setSize(width, height)
-            if (bottomEdge.draw(canvas)) postInvalidateOnAnimation()
-            canvas.restoreToCount(count)
+            canvas.withTranslation((scrollX - width).toFloat(), (scrollY + height).toFloat()) {
+                rotate(180f, width.toFloat(), 0f)
+                bottomEdge.setSize(width, height)
+                if (bottomEdge.draw(this)) postInvalidateOnAnimation()
+            }
         }
     }
     private fun releaseEdges() {
@@ -992,7 +992,7 @@ internal class NativeSourceView @JvmOverloads constructor(context: Context, attr
     }
     private fun openLink(url: String) {
         try {
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, url.toUri()).apply {
                 addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)

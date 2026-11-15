@@ -60,7 +60,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopSearchBar
+import androidx.compose.material3.AppBarWithSearch
 import androidx.compose.material3.rememberSearchBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -84,7 +84,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -168,12 +168,12 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
         savePreferredColumns(context, count)
     }
     val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    val initialCapacity = remember(configuration.screenWidthDp, density.fontScale) {
-        noteGridCapacity(configuration.screenWidthDp.toFloat(), density.fontScale)
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp().value }
+    val initialCapacity = remember(windowWidth, density.fontScale) {
+        noteGridCapacity(windowWidth, density.fontScale)
     }
-    val initialColumns = remember(preferredColumns, configuration.screenWidthDp, density.fontScale) {
-        noteGridColumns(preferredColumns, configuration.screenWidthDp.toFloat(), density.fontScale)
+    val initialColumns = remember(preferredColumns, windowWidth, density.fontScale) {
+        noteGridColumns(preferredColumns, windowWidth, density.fontScale)
     }
     var gridCapacity by remember { mutableIntStateOf(initialCapacity) }
     var displayedColumns by remember { mutableIntStateOf(initialColumns) }
@@ -462,7 +462,7 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                     )
                     else TopAppBar(title = {
                         // Mirror the app bar's title inset at the trailing edge.
-                        TopSearchBar(searchState, inputField = input, modifier = Modifier.padding(end = 16.dp),
+                        AppBarWithSearch(searchState, inputField = input, modifier = Modifier.padding(end = 16.dp),
                             windowInsets = WindowInsets(0))
                     }, scrollBehavior = headerScroll,
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface,

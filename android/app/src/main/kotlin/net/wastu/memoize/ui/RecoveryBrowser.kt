@@ -161,7 +161,7 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                                                 style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
                                         items(group, key = { it.id }) { version ->
-                                            ListItem(headlineContent = { Text(recoveryTimestamp(version.savedAt), style = MaterialTheme.typography.titleSmall) },
+                                            ListItem(onClick = { keyboard?.hide(); selectedId = version.id; error = null },
                                                 supportingContent = {
                                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                                         Text(version.reason, style = MaterialTheme.typography.labelMedium,
@@ -172,8 +172,9 @@ internal fun RecoveryBrowser(notes: NoteRepository, noteId: String? = null, onDi
                                                             "${version.snapshot.attachments.size} attachments", style = MaterialTheme.typography.labelSmall)
                                                     }
                                                 }, trailingContent = { AppIcon(R.drawable.ic_chevron_right) },
-                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("recovery-${version.id}")
-                                                    .clickable(role = Role.Button) { keyboard?.hide(); selectedId = version.id; error = null })
+                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("recovery-${version.id}")) {
+                                                Text(recoveryTimestamp(version.savedAt), style = MaterialTheme.typography.titleSmall)
+                                            }
                                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant,
                                                 modifier = Modifier.padding(horizontal = 16.dp))
                                         }
@@ -223,8 +224,8 @@ private fun RecoveryPreview(version: RecoveryRevision, modifier: Modifier) {
             SelectionContainer { Text(parts[index], style = MaterialTheme.typography.bodyLarge) }
         }
         items(version.snapshot.attachments, key = { "attachment-${it.id}" }) { attachment ->
-            ListItem(headlineContent = { Text(attachment.filename) }, leadingContent = { AppIcon(R.drawable.ic_attach) },
-                supportingContent = { Text("Included when restored") })
+            ListItem(leadingContent = { AppIcon(R.drawable.ic_attach) },
+                supportingContent = { Text("Included when restored") }) { Text(attachment.filename) }
         }
     }
 }

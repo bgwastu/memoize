@@ -1,5 +1,6 @@
 package net.wastu.memoize.ui
 
+import androidx.core.net.toUri
 import android.text.Layout
 import android.text.SpannableString
 import android.text.Spanned
@@ -54,7 +55,7 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
     val sizePx = with(density) { style.fontSize.toPx() }
     val lineHeightPx = with(density) { style.lineHeight.toPx() }
     AndroidView(modifier = Modifier.fillMaxWidth().clipToBounds(), factory = { context ->
-        TextView(context).apply {
+        PreviewTextView(context).apply {
             includeFontPadding = false
             isFocusable = false
             setPadding(0, 0, 0, 0)
@@ -94,15 +95,17 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
                                     val offset = layout.getOffsetForHorizontal(line, x)
                                     if (onToggleTask != null) taskToggleAt(fullSource, sourceOffset + offset)?.let {
                                         onToggleTask(it)
+                                        view.performClick()
                                         return@setOnTouchListener true
                                     }
                                     val link = findLinkAt(display, offset)
                                     if (link != null) {
                                         try {
-                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link.first)).apply {
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, link.first.toUri()).apply {
                                                 addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                                             }
                                             view.context.startActivity(intent)
+                                            view.performClick()
                                             return@setOnTouchListener true
                                         } catch (_: Exception) {}
                                     }
@@ -116,6 +119,11 @@ internal fun MarkdownPreviewText(source: String, matches: List<TextMatch>, style
             }
         }
     })
+}
+
+/** Taps on links and task boxes are reported through performClick for accessibility services. */
+private class PreviewTextView(context: android.content.Context) : TextView(context) {
+    override fun performClick(): Boolean = super.performClick()
 }
 
 internal fun ColorScheme.sourceSyntaxColor(active: Boolean = false): Color =

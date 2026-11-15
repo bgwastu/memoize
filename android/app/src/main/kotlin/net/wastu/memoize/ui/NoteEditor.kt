@@ -1,5 +1,9 @@
 package net.wastu.memoize.ui
 
+import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberBottomSheetState
+import androidx.core.net.toUri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -31,11 +35,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -558,10 +560,10 @@ private fun EditorContent(graph: AppGraph, notes: NoteRepository, note: Note, mi
                 EditorLocationChip(
                     location = loc,
                     onOpen = { target ->
-                        val geoUri = Uri.parse("geo:${target.latitude},${target.longitude}?q=${target.latitude},${target.longitude}(${Uri.encode(target.placeholder)})")
+                        val geoUri = "geo:${target.latitude},${target.longitude}?q=${target.latitude},${target.longitude}(${Uri.encode(target.placeholder)})".toUri()
                         val intent = Intent(Intent.ACTION_VIEW, geoUri)
                         runCatching { context.startActivity(intent) }.onFailure {
-                            val webUri = Uri.parse("https://www.google.com/maps/search/?api=1&query=${target.latitude},${target.longitude}")
+                            val webUri = "https://www.google.com/maps/search/?api=1&query=${target.latitude},${target.longitude}".toUri()
                             runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, webUri)) }
                         }
                     },
@@ -754,7 +756,7 @@ private fun AttachmentChoiceSheet(
     onFile: () -> Unit,
     onLocation: () -> Unit,
 ) {
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheet = rememberBottomSheetState(initialValue = SheetValue.Hidden, enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded))
     val scope = rememberCoroutineScope()
     var choosing by remember { mutableStateOf(false) }
     fun choose(action: () -> Unit) {
@@ -765,18 +767,16 @@ private fun AttachmentChoiceSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
             Text("Attach to note", Modifier.padding(bottom = 20.dp), style = MaterialTheme.typography.headlineSmall)
-            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Column {
-                    ListItem(headlineContent = { Text("Photo or video") }, leadingContent = { AppIcon(R.drawable.ic_image) },
-                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onPhoto) })
-                    ListItem(headlineContent = { Text("Document or file") }, leadingContent = { AppIcon(R.drawable.ic_file) },
-                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onFile) })
-                    ListItem(headlineContent = { Text("Location") }, leadingContent = { AppIcon(R.drawable.ic_location) },
-                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = !choosing, role = Role.Button) { choose(onLocation) })
-                }
+            Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+                SegmentedListItem(onClick = { choose(onPhoto) }, enabled = !choosing,
+                    shapes = ListItemDefaults.segmentedShapes(index = 0, count = 3),
+                    leadingContent = { AppIcon(R.drawable.ic_image) }, modifier = Modifier.fillMaxWidth()) { Text("Photo or video") }
+                SegmentedListItem(onClick = { choose(onFile) }, enabled = !choosing,
+                    shapes = ListItemDefaults.segmentedShapes(index = 1, count = 3),
+                    leadingContent = { AppIcon(R.drawable.ic_file) }, modifier = Modifier.fillMaxWidth()) { Text("Document or file") }
+                SegmentedListItem(onClick = { choose(onLocation) }, enabled = !choosing,
+                    shapes = ListItemDefaults.segmentedShapes(index = 2, count = 3),
+                    leadingContent = { AppIcon(R.drawable.ic_location) }, modifier = Modifier.fillMaxWidth()) { Text("Location") }
             }
         }
     }
@@ -891,7 +891,7 @@ private fun PublicShareSheet(
     onDismiss: () -> Unit,
     onToggle: (Boolean) -> Unit,
 ) {
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheet = rememberBottomSheetState(initialValue = SheetValue.Hidden, enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded))
     val context = LocalContext.current
     val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? ClipboardManager
     var copied by remember { mutableStateOf(false) }

@@ -7,7 +7,6 @@ import android.location.Address
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
-import android.os.Build
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -57,24 +56,14 @@ object LocationService {
         try {
             if (Geocoder.isPresent()) {
                 val geocoder = Geocoder(context, Locale.getDefault())
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    val address = suspendCancellableCoroutine<String?> { cont ->
-                        geocoder.getFromLocation(latitude, longitude, 1) { addresses ->
-                            val first = addresses.firstOrNull()
-                            val name = first?.let { formatAddress(it) }
-                            cont.resume(name)
-                        }
-                    }
-                    if (!address.isNullOrBlank()) return@withContext address
-                } else {
-                    @Suppress("DEPRECATION")
-                    val addresses = geocoder.getFromLocation(latitude, longitude, 1)
-                    val first = addresses?.firstOrNull()
-                    if (first != null) {
-                        val name = formatAddress(first)
-                        if (name.isNotBlank()) return@withContext name
+                val address = suspendCancellableCoroutine<String?> { cont ->
+                    geocoder.getFromLocation(latitude, longitude, 1) { addresses ->
+                        val first = addresses.firstOrNull()
+                        val name = first?.let { formatAddress(it) }
+                        cont.resume(name)
                     }
                 }
+                if (!address.isNullOrBlank()) return@withContext address
             }
         } catch (_: Exception) {}
         "%.4f, %.4f".format(Locale.US, latitude, longitude)

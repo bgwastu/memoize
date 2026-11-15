@@ -731,14 +731,15 @@ private fun NotesList(
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                                 Column(Modifier.weight(1f)) {
-                                    val showHeader = note.pinned || note.visibility == NoteVisibility.PUBLIC
+                                    val pinLabel = note.pinned && !sectioned
+                                    val showHeader = pinLabel || note.visibility == NoteVisibility.PUBLIC
                                     if (showHeader) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                                             modifier = Modifier.padding(bottom = 4.dp)
                                         ) {
-                                            if (note.pinned) {
+                                            if (pinLabel) {
                                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                                     Icon(
                                                         painter = painterResource(R.drawable.ic_pin),

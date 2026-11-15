@@ -5,12 +5,12 @@ import android.content.Intent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.core.content.FileProvider
@@ -22,60 +22,51 @@ import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun NoteSelectionBar(count: Int, busy: Boolean, archived: Boolean, pinned: Boolean = false, onClose: () -> Unit,
-    onArchive: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit, onSelectAll: () -> Unit, onClear: () -> Unit, onFilters: () -> Unit, onTogglePin: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
+internal fun NoteSelectionBar(count: Int, busy: Boolean, onClose: () -> Unit, onSelectAll: () -> Unit) {
     TopAppBar(modifier = Modifier.testTag("note-selection-bar"),
-        title = { Text("$count selected", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        title = { Text("$count selected", style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
         navigationIcon = { IconAction(R.drawable.ic_close, "Exit selection", !busy, onClose) },
-        actions = {
-            if (busy) CircularProgressIndicator(Modifier.size(24.dp))
-            else {
-                IconAction(if (pinned) R.drawable.ic_pin_off else R.drawable.ic_pin, if (pinned) "Unpin selected notes" else "Pin selected notes", count > 0, onTogglePin)
-                IconAction(R.drawable.ic_archive, if (archived) "Unarchive selected notes" else "Archive selected notes", count > 0, onArchive)
-                Box {
-                    IconAction(R.drawable.ic_more, "Selection actions") { menu = true }
-                    DropdownMenu(
-                        expanded = menu,
-                        onDismissRequest = { menu = false },
-                        modifier = Modifier.widthIn(min = 200.dp, max = 280.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Select all results") },
-                            leadingIcon = { AppIcon(R.drawable.ic_checklist) },
-                            onClick = { menu = false; onSelectAll() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Share text") },
-                            leadingIcon = { AppIcon(R.drawable.ic_attach) },
-                            enabled = count > 0,
-                            onClick = { menu = false; onShare() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sort and filter") },
-                            leadingIcon = { AppIcon(R.drawable.ic_filter) },
-                            onClick = { menu = false; onFilters() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Clear selection") },
-                            leadingIcon = { AppIcon(R.drawable.ic_close) },
-                            enabled = count > 0,
-                            onClick = { menu = false; onClear() }
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        DropdownMenuItem(
-                            text = { Text("Delete") },
-                            leadingIcon = { AppIcon(R.drawable.ic_close) },
-                            enabled = count > 0,
-                            onClick = { menu = false; onDelete() }
-                        )
-                    }
-                }
+        actions = { TextButton(onClick = onSelectAll, enabled = !busy) { Text("Select all") } })
+}
+
+/** Batch actions float above the notes so the grid keeps its full height while selecting. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+internal fun NoteSelectionToolbar(count: Int, busy: Boolean, archived: Boolean, pinned: Boolean,
+    onArchive: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit, onClear: () -> Unit, onFilters: () -> Unit, onTogglePin: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    val enabled = count > 0 && !busy
+    HorizontalFloatingToolbar(expanded = true, modifier = Modifier.testTag("note-selection-toolbar"),
+        colors = FloatingToolbarDefaults.vibrantFloatingToolbarColors()) {
+        if (busy) Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { LoadingIndicator(Modifier.size(36.dp)) }
+        else IconAction(if (pinned) R.drawable.ic_pin_off else R.drawable.ic_pin, if (pinned) "Unpin selected notes" else "Pin selected notes", enabled, onTogglePin)
+        IconAction(R.drawable.ic_archive, if (archived) "Unarchive selected notes" else "Archive selected notes", enabled, onArchive)
+        IconAction(R.drawable.ic_share, "Share selected notes", enabled, onShare)
+        IconAction(R.drawable.ic_delete, "Delete selected notes", enabled, onDelete)
+        Box {
+            IconAction(R.drawable.ic_more, "Selection actions", !busy) { menu = true }
+            DropdownMenu(
+                expanded = menu,
+                onDismissRequest = { menu = false },
+                modifier = Modifier.widthIn(min = 200.dp, max = 280.dp),
+                shape = RoundedCornerShape(16.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Sort and filter") },
+                    leadingIcon = { AppIcon(R.drawable.ic_filter) },
+                    onClick = { menu = false; onFilters() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Clear selection") },
+                    leadingIcon = { AppIcon(R.drawable.ic_close) },
+                    enabled = count > 0,
+                    onClick = { menu = false; onClear() }
+                )
             }
-        })
+        }
+    }
 }
 
 /** Keep long sources out of Binder extras; the chooser receives a read-only Markdown file. */

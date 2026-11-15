@@ -49,6 +49,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.material3.FabPosition
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MediumExtendedFloatingActionButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -451,20 +452,8 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
             Scaffold(
                 modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().nestedScroll(createButtonScroll).nestedScroll(headerScroll.nestedScrollConnection),
                 topBar = {
-                    if (selecting) NoteSelectionBar(
-                        count = selection.size,
-                        busy = batchBusy,
-                        archived = filter.state == NoteState.ARCHIVED,
-                        pinned = allPinned,
-                        onClose = ::exitSelection,
-                        onArchive = { changeSelection(false) },
-                        onDelete = { changeSelection(true) },
-                        onShare = ::shareSelection,
-                        onSelectAll = { selection = results.map { it.note.id } },
-                        onClear = ::exitSelection,
-                        onFilters = { filters = true },
-                        onTogglePin = ::toggleSelectionPin
-                    )
+                    if (selecting) NoteSelectionBar(selection.size, batchBusy, onClose = ::exitSelection,
+                        onSelectAll = { selection = results.map { it.note.id } })
                     else TopAppBar(title = {
                         // Mirror the app bar's title inset at the trailing edge.
                         AppBarWithSearch(searchState, inputField = input, modifier = Modifier.padding(end = 16.dp),
@@ -474,8 +463,21 @@ fun MemoizeApp(graph: AppGraph, requests: StateFlow<OpenRequest>) {
                             scrolledContainerColor = MaterialTheme.colorScheme.surface))
                 },
                 snackbarHost = { SnackbarHost(snackbar) },
+                floatingActionButtonPosition = if (selecting) FabPosition.Center else FabPosition.End,
                 floatingActionButton = {
-                    if (!selecting) MediumExtendedFloatingActionButton(onClick = {
+                    if (selecting) NoteSelectionToolbar(
+                        count = selection.size,
+                        busy = batchBusy,
+                        archived = filter.state == NoteState.ARCHIVED,
+                        pinned = allPinned,
+                        onArchive = { changeSelection(false) },
+                        onDelete = { changeSelection(true) },
+                        onShare = ::shareSelection,
+                        onClear = ::exitSelection,
+                        onFilters = { filters = true },
+                        onTogglePin = ::toggleSelectionPin
+                    )
+                    else MediumExtendedFloatingActionButton(onClick = {
                         scope.launch {
                             try {
                                 val draft = notes.create()

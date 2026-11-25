@@ -4,184 +4,6 @@ import QuartzCore
 import KeyboardShortcuts
 import MemoizeCore
 
-final class SourceTextView: NSTextView {
-    lazy var noteFinder = NoteFinder(textView:self)
-    override func performTextFinderAction(_ sender: Any?) {
-        let tag = (sender as? NSMenuItem)?.tag ?? (sender as? NSControl)?.tag ?? NSTextFinder.Action.showFindInterface.rawValue
-        if let action = NSTextFinder.Action(rawValue:tag) { noteFinder.finder.performAction(action) }
-    }
-    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
-        if item.action == #selector(performTextFinderAction(_:)), let action = NSTextFinder.Action(rawValue:item.tag) {
-            return noteFinder.finder.validateAction(action)
-        }
-        if let action = item.action, Self.lineActions.contains(action) {
-            return (isEditable || action == #selector(selectWholeLine(_:))) && !hasMarkedText() && selectedRanges.count == 1
-        }
-        return super.validateUserInterfaceItem(item)
-    }
-    override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
-        enclosingScrollView?.layer?.removeAnimation(forKey:kCATransition)
-        if replacementString != nil { noteFinder.finder.noteClientStringWillChange() }
-        return super.shouldChangeText(in:affectedCharRange,replacementString:replacementString)
-    }
-    override func shouldChangeText(inRanges affectedRanges: [NSValue], replacementStrings: [String]?) -> Bool {
-        enclosingScrollView?.layer?.removeAnimation(forKey:kCATransition)
-        if replacementStrings != nil { noteFinder.finder.noteClientStringWillChange() }
-        return super.shouldChangeText(inRanges:affectedRanges,replacementStrings:replacementStrings)
-    }
-    override func drawBackground(in rect: NSRect) {
-        super.drawBackground(in:rect)
-        noteFinder.drawMatches(in:rect)
-    }
-    var ownUndoManager = UndoManager()
-    override var undoManager: UndoManager? { ownUndoManager }
-    func withUndoGroup(_ name: String, _ edit: () -> Void) {
-        breakUndoCoalescing()
-        let manager = ownUndoManager
-        // A semantic action must not share the automatic event group with
-        // earlier typing, including when it resumes from an async operation.
-        if manager.groupsByEvent, manager.groupingLevel == 1, !manager.isUndoing, !manager.isRedoing { manager.endUndoGrouping() }
-        let isolated = manager.groupsByEvent && manager.groupingLevel == 0
-        if isolated { manager.groupsByEvent = false }
-        manager.beginUndoGrouping(); edit()
-        manager.setActionName(name); manager.endUndoGrouping()
-        if isolated { manager.groupsByEvent = true }
-        breakUndoCoalescing()
-    }
-    var onImage: ((Data,String,String) -> Void)?
-    var onFile: ((URL) -> Void)?
-    var globalSearch: (() -> Void)?
-    /// Return true when the empty note was handled. Return false to delete a remaining character.
-    var onEmptyBackspace: (() -> Bool)?
-    override func deleteBackward(_ sender: Any?) {
-        if !hasMarkedText(), string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, let onEmptyBackspace, onEmptyBackspace() {
-            return
-        }
-        super.deleteBackward(sender)
-    }
-    override func insertNewline(_ sender: Any?) {
-        guard !hasMarkedText(), selectedRanges.count == 1,
-              let edit = MarkdownListEditing.newline(in:string,selection:selectedRange()) else { super.insertNewline(sender); return }
-        applyListEdit(edit)
-    }
-    override func insertTab(_ sender: Any?) {
-        guard !hasMarkedText(), selectedRanges.count == 1,
-              let edit = MarkdownListEditing.selectionIndent(in:string,selection:selectedRange(),outdent:false) else { super.insertTab(sender); return }
-        applyIndentEdit(edit,outdent:false)
-    }
-    override func insertBacktab(_ sender: Any?) {
-        guard !hasMarkedText(), selectedRanges.count == 1,
-              let edit = MarkdownListEditing.selectionIndent(in:string,selection:selectedRange(),outdent:true) else {
-            if !hasMarkedText(), selectedRanges.count == 1, selectedRange().length > 0 { return }
-            super.insertBacktab(sender); return
-        }
-        applyIndentEdit(edit,outdent:true)
-    }
-    private func applyIndentEdit(_ edit: MarkdownListEditing.Edit, outdent: Bool) {
-        guard selectedRange().length > 0 else { applyListEdit(edit); return }
-        guard (string as NSString).substring(with:edit.range) != edit.replacement else { return }
-        withUndoGroup(outdent ? "Outdent" : "Indent") {
-            replaceSelectedLines(edit.range,with:edit.replacement,selection:edit.selection,undoSelection:selectedRange())
-        }
-    }
-    private func replaceSelectedLines(_ range: NSRange, with replacement: String, selection: NSRange, undoSelection: NSRange) {
-        let previous = (string as NSString).substring(with:range)
-        ownUndoManager.registerUndo(withTarget:self) { view in
-            view.replaceSelectedLines(NSRange(location:range.location,length:replacement.utf16.count),with:previous,selection:undoSelection,undoSelection:selection)
-        }
-        // Keep native input and change notifications, with one inverse edit that
-        // restores the exact selection rather than selecting the replaced block.
-        ownUndoManager.disableUndoRegistration()
-        insertText(replacement,replacementRange:range)
-        ownUndoManager.enableUndoRegistration()
-        setSelectedRange(selection)
-        breakUndoCoalescing()
-    }
-    private func applyListEdit(_ edit: MarkdownListEditing.Edit) {
-        guard (string as NSString).substring(with:edit.range) != edit.replacement else { return }
-        breakUndoCoalescing()
-        insertText(edit.replacement,replacementRange:edit.range)
-        setSelectedRange(edit.selection)
-        breakUndoCoalescing()
-    }
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 1, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty, window?.firstResponder === self,
-           !hasMarkedText(), selectedRanges.count == 1, selectedRange().length == 0 {
-            let offset = characterIndexForInsertion(at:convert(event.locationInWindow,from:nil))
-            if let edit = MarkdownListEditing.toggleTask(in:string,at:offset) {
-                let selection = selectedRange()
-                withUndoGroup("Toggle Checkbox") {
-                    replaceSelectedLines(edit.range,with:edit.replacement,selection:selection,undoSelection:selection)
-                }
-                return
-            }
-        }
-        super.mouseDown(with:event)
-    }
-    static let lineActions: Set<Selector> = [#selector(moveLinesUp(_:)),#selector(moveLinesDown(_:)),#selector(copyLinesUp(_:)),#selector(copyLinesDown(_:)),
-        #selector(deleteLines(_:)),#selector(insertLineBelow(_:)),#selector(insertLineAbove(_:)),#selector(selectWholeLine(_:)),#selector(indentLines(_:)),#selector(outdentLines(_:))]
-    @objc func moveLinesUp(_ sender: Any?) { lineEdit("Move Line Up") { MarkdownLineEditing.moveLines(in:$0,selection:$1,up:true) } }
-    @objc func moveLinesDown(_ sender: Any?) { lineEdit("Move Line Down") { MarkdownLineEditing.moveLines(in:$0,selection:$1,up:false) } }
-    @objc func copyLinesUp(_ sender: Any?) { lineEdit("Copy Line Up") { MarkdownLineEditing.copyLines(in:$0,selection:$1,down:false) } }
-    @objc func copyLinesDown(_ sender: Any?) { lineEdit("Copy Line Down") { MarkdownLineEditing.copyLines(in:$0,selection:$1,down:true) } }
-    @objc func deleteLines(_ sender: Any?) { lineEdit("Delete Line") { MarkdownLineEditing.deleteLines(in:$0,selection:$1) } }
-    @objc func insertLineBelow(_ sender: Any?) { lineEdit("Insert Line Below") { MarkdownLineEditing.insertLine(in:$0,selection:$1,above:false) } }
-    @objc func insertLineAbove(_ sender: Any?) { lineEdit("Insert Line Above") { MarkdownLineEditing.insertLine(in:$0,selection:$1,above:true) } }
-    @objc func indentLines(_ sender: Any?) { lineEdit("Indent") { MarkdownLineEditing.indent(in:$0,selection:$1,outdent:false) } }
-    @objc func outdentLines(_ sender: Any?) { lineEdit("Outdent") { MarkdownLineEditing.indent(in:$0,selection:$1,outdent:true) } }
-    @objc func selectWholeLine(_ sender: Any?) {
-        guard !hasMarkedText(), selectedRanges.count == 1, let range = MarkdownLineEditing.selectLine(in:string,selection:selectedRange()) else { return }
-        setSelectedRange(range); scrollRangeToVisible(range)
-    }
-    private func lineEdit(_ name: String, _ make: (String,NSRange) -> MarkdownLineEditing.Edit?) {
-        guard isEditable, !hasMarkedText(), selectedRanges.count == 1, let edit = make(string,selectedRange()),
-              (string as NSString).substring(with:edit.range) != edit.replacement else { return }
-        withUndoGroup(name) {
-            replaceSelectedLines(edit.range,with:edit.replacement,selection:edit.selection,undoSelection:selectedRange())
-        }
-        scrollRangeToVisible(edit.selection)
-    }
-    override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command,.shift], event.charactersIgnoringModifiers?.lowercased() == "f" { globalSearch?(); return }
-        super.keyDown(with:event)
-    }
-    override func paste(_ sender: Any?) {
-        if consume(NSPasteboard.general) { return }; super.paste(sender)
-    }
-    override var writablePasteboardTypes: [NSPasteboard.PasteboardType] {
-        selectedRanges.contains(where:{ $0.rangeValue.length > 0 }) ? [.string] : []
-    }
-    override func writeSelection(to pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
-        guard type == .string else { return super.writeSelection(to:pasteboard,type:type) }
-        // TextKit 2's plain-text copy can omit a selection. Copy its source directly.
-        let source = string as NSString
-        let ranges = selectedRanges.map(\.rangeValue)
-        guard ranges.contains(where:{ $0.length > 0 }), ranges.allSatisfy({ $0.location != NSNotFound && NSMaxRange($0) <= source.length }) else { return false }
-        return pasteboard.setString(ranges.map { source.substring(with:$0) }.joined(separator:"\n"),forType:.string)
-    }
-    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        if sender.draggingPasteboard.canReadObject(forClasses:[NSURL.self],options:[.urlReadingFileURLsOnly:true]) || sender.draggingPasteboard.availableType(from:[.png,.tiff]) != nil { return .copy }
-        return super.draggingEntered(sender)
-    }
-    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        let point = convert(sender.draggingLocation,from:nil)
-        setSelectedRange(NSRange(location:characterIndexForInsertion(at:point),length:0))
-        if consume(sender.draggingPasteboard) { return true }; return super.performDragOperation(sender)
-    }
-    func consume(_ pasteboard: NSPasteboard) -> Bool {
-        if let urls = pasteboard.readObjects(forClasses:[NSURL.self],options:[.urlReadingFileURLsOnly:true]) as? [URL] {
-            if !urls.isEmpty, let onFile {
-                for url in urls { onFile(url) }; return true
-            }
-        }
-        if let data = pasteboard.data(forType:.png) { onImage?(data,"Screenshot.png","image/png"); return true }
-        if let data = pasteboard.data(forType:.tiff) {
-            onImage?(data,"Screenshot.tiff","image/tiff"); return true
-        }
-        return false
-    }
-}
-
 @MainActor final class NoteEditor: NSObject, NSTextViewDelegate, @MainActor NSTextStorageDelegate, NSWindowDelegate, NSPopoverDelegate {
     let panel: FloatingPanel
     let textView: SourceTextView
@@ -221,10 +43,12 @@ final class SourceTextView: NSTextView {
     var onDelete: (() -> Void)?
     var onPin: ((Bool) -> Void)?
     let baseFont = NSFont.monospacedSystemFont(ofSize:14,weight:.regular)
+    private let paragraph: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.lineSpacing = 3; return style }()
+    private var baseAttributes: [NSAttributedString.Key:Any] { [.font:baseFont,.paragraphStyle:paragraph,.foregroundColor:NSColor.labelColor] }
 
     override init() {
         panel = FloatingPanel(contentRect:NSRect(x:260,y:180,width:530,height:590),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
-        textView = SourceTextView(usingTextLayoutManager:true)
+        textView = SourceTextView.make()
         super.init()
         panel.title = "Memoize"; panel.titleVisibility = .hidden; panel.titlebarAppearsTransparent = true
         panel.minSize = NSSize(width:330,height:260); panel.isReleasedWhenClosed = false; panel.hidesOnDeactivate = false
@@ -261,12 +85,11 @@ final class SourceTextView: NSTextView {
         textView.isContinuousSpellCheckingEnabled = true
         textView.isAutomaticSpellingCorrectionEnabled = true
         textView.font = baseFont; textView.textColor = .labelColor; textView.backgroundColor = .textBackgroundColor
-        let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 3
-        textView.defaultParagraphStyle = paragraph; textView.typingAttributes = [.font:baseFont,.paragraphStyle:paragraph,.foregroundColor:NSColor.labelColor]
-        textView.linkTextAttributes = [.foregroundColor:NSColor.controlAccentColor,.underlineStyle:0]
+        textView.defaultParagraphStyle = paragraph; textView.typingAttributes = baseAttributes
+        // Links are underlined by the styler; tags stay plain.
+        textView.linkTextAttributes = [.foregroundColor:NSColor.controlAccentColor]
         textView.textContainerInset = NSSize(width:22,height:6); textView.isVerticallyResizable = true; textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]; textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width:490,height:CGFloat.greatestFiniteMagnitude)
         textView.minSize = NSSize(width:0,height:0); textView.maxSize = NSSize(width:CGFloat.greatestFiniteMagnitude,height:CGFloat.greatestFiniteMagnitude)
         textView.delegate = self; textView.textStorage?.delegate = self; textView.registerForDraggedTypes([.fileURL,.png,.tiff])
         NotificationCenter.default.addObserver(self,selector:#selector(undoChanged(_:)),name:.NSUndoManagerDidUndoChange,object:nil)
@@ -340,16 +163,79 @@ final class SourceTextView: NSTextView {
         displayedID = note.id
         publishedSource = note.content
         textView.ownUndoManager.disableUndoRegistration()
-        textView.string = note.content; textView.font = baseFont; textView.textColor = .labelColor
+        textView.textStorage?.setAttributedString(NSAttributedString(string:note.content,attributes:baseAttributes))
+        textView.typingAttributes = baseAttributes
         textView.ownUndoManager.enableUndoRegistration()
         textView.breakUndoCoalescing()
         let length = (note.content as NSString).length
-        let position = min(note.cursor,length)
-        textView.setSelectedRange(NSRange(location:position,length:min(note.selectionLength,length - position)))
-        textView.layoutSubtreeIfNeeded()
-        scrollView.contentView.scroll(to:NSPoint(x:0,y:note.scroll)); scrollView.reflectScrolledClipView(scrollView.contentView)
+        let position = min(max(0,note.cursor),length)
+        textView.setSelectedRange(NSRange(location:position,length:min(max(0,note.selectionLength),length - position)))
         panel.title = note.conflict ? "Memoize — conflict copy" : "Memoize"
-        installing = false; highlight()
+        installing = false
+        // Small notes get their list indents before the saved scroll position is restored.
+        highlight()
+        if let layout = textView.layoutManager, let container = textView.textContainer { layout.ensureLayout(for:container) }
+        textView.sizeToFit()
+        let maxY = max(0,textView.frame.height - scrollView.contentView.bounds.height)
+        scrollView.contentView.scroll(to:NSPoint(x:0,y:min(max(0,note.scroll),maxY))); scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+    /// Merges a newer saved or synced version into the open note. Only the
+    /// changed span is replaced, so the caret, selection, and viewport stay put.
+    /// The merge is one Undo step, keeping earlier Undo history valid.
+    func merge(_ note: Note) {
+        guard note.id == displayedID, let storage = textView.textStorage, !textView.hasMarkedText() else { return }
+        panel.title = note.conflict ? "Memoize — conflict copy" : "Memoize"
+        let current = textView.source
+        guard !sameSource(current,note.content) else { return }
+        let old = current as NSString, new = note.content as NSString
+        var prefix = 0; let shortest = min(old.length,new.length)
+        while prefix < shortest, old.character(at:prefix) == new.character(at:prefix) { prefix += 1 }
+        var suffix = 0
+        while suffix < shortest - prefix, old.character(at:old.length - 1 - suffix) == new.character(at:new.length - 1 - suffix) { suffix += 1 }
+        // Never split a surrogate pair or a CRLF.
+        while prefix > 0, UTF16.isLeadSurrogate(old.character(at:prefix - 1)) || (old.character(at:prefix - 1) == 13 && prefix < old.length && old.character(at:prefix) == 10) { prefix -= 1 }
+        while suffix > 0, UTF16.isTrailSurrogate(old.character(at:old.length - suffix)) { suffix -= 1 }
+        let replaced = NSRange(location:prefix,length:old.length - prefix - suffix)
+        let replacement = new.substring(with:NSRange(location:prefix,length:new.length - prefix - suffix))
+        let delta = replacement.utf16.count - replaced.length
+        func map(_ location: Int) -> Int {
+            if location <= replaced.location { return location }
+            if location >= NSMaxRange(replaced) { return location + delta }
+            return replaced.location + replacement.utf16.count
+        }
+        let selections = textView.selectedRanges.map(\.rangeValue).map { range -> NSValue in
+            let start = map(range.location); let end = max(start,map(NSMaxRange(range)))
+            return NSValue(range:NSRange(location:start,length:end - start))
+        }
+        publishedSource = note.content
+        preservingViewport(map:map) {
+            textView.withUndoGroup("Sync Change") {
+                guard textView.shouldChangeText(in:replaced,replacementString:replacement) else { return }
+                storage.replaceCharacters(in:replaced,with:NSAttributedString(string:replacement,attributes:baseAttributes))
+                textView.didChangeText()
+            }
+            textView.selectedRanges = selections
+        }
+        generation += 1; highlight()
+    }
+    /// Keeps the first visible character at the same height across a reflow.
+    private func preservingViewport(map: (Int) -> Int = { $0 }, _ body: () -> Void) {
+        guard let layout = textView.layoutManager, let container = textView.textContainer, layout.numberOfGlyphs > 0 else { body(); return }
+        let origin = textView.textContainerOrigin
+        let top = scrollView.contentView.bounds.minY
+        let glyph = layout.glyphIndex(for:NSPoint(x:0,y:max(0,top - origin.y)),in:container)
+        let anchor = layout.characterIndexForGlyph(at:glyph)
+        let before = layout.lineFragmentRect(forGlyphAt:glyph,effectiveRange:nil).minY
+        body()
+        let length = textView.textStorage?.length ?? 0
+        guard length > 0 else { return }
+        let moved = layout.glyphIndexForCharacter(at:min(map(anchor),length - 1))
+        let after = layout.lineFragmentRect(forGlyphAt:moved,effectiveRange:nil).minY
+        guard after != before else { return }
+        textView.sizeToFit()
+        let maxY = max(0,textView.frame.height - scrollView.contentView.bounds.height)
+        scrollView.contentView.scroll(to:NSPoint(x:scrollView.contentView.bounds.minX,y:min(max(0,top + after - before),maxY)))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
     /// Clearing a just-created note starts a fresh identity, while native Undo keeps working.
     func continueDraft(as id: String) {
@@ -369,10 +255,11 @@ final class SourceTextView: NSTextView {
     func find(query: String? = nil) { show(); textView.noteFinder.show(query:query) }
     func windowShouldClose(_ sender: NSWindow) -> Bool { hide(); return false }
     func textDidChange(_ notification: Notification) {
-        guard !installing, !sameSource(textView.string,publishedSource) else { return }; generation += 1
-        publishedSource = textView.string
-        textView.needsDisplay = true
-        onEdit?(publishedSource); highlight()
+        guard !installing else { return }
+        let source = textView.source
+        guard !sameSource(source,publishedSource) else { return }; generation += 1
+        publishedSource = source
+        onEdit?(source); highlight(source)
     }
     func textStorage(_ textStorage: NSTextStorage, willProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
         // Attribute fixing can broaden the later didProcessEditing range.
@@ -410,10 +297,10 @@ final class SourceTextView: NSTextView {
         }
         return false
     }
-    private func highlight() {
+    private func highlight(_ text: String? = nil) {
         parsing?.cancel()
         guard !textView.hasMarkedText() else { return }
-        let source = textView.string; let revision = generation
+        let source = text ?? textView.source; let revision = generation
         // Typical notes parse in a few milliseconds; color them in the same frame as the keystroke.
         if (source as NSString).length <= 32_768 { finish(MarkdownAnalysis.parse(source),revision:revision); return }
         parsing = Task { [weak self] in
@@ -428,90 +315,17 @@ final class SourceTextView: NSTextView {
     }
     private func finish(_ result: MarkdownAnalysis, revision: Int) {
         apply(result); analysis = result; highlightedGeneration = revision
-        textView.needsDisplay = true
         onReferences?(result)
     }
-    private struct StorageRun: Equatable {
-        let range: NSRange; let value: String
-        /// Storage reports equal neighbours as one attribute run.
-        static func coalesced(_ runs: [StorageRun]) -> [StorageRun] {
-            runs.reduce(into:[]) { result,run in
-                if let last = result.last, last.value == run.value, NSMaxRange(last.range) == run.range.location {
-                    result[result.count - 1] = StorageRun(range:NSUnionRange(last.range,run.range),value:run.value)
-                } else { result.append(run) }
-            }
-        }
-    }
     private func apply(_ result: MarkdownAnalysis) {
-        // Links need AppKit hit testing. Finish storage edits before applying rendering colors.
-        // Storage attributes reflow their paragraphs, so rewrite them only when they actually differ.
-        if let storage = textView.textStorage {
-            let fullRange = NSRange(location:0,length:storage.length)
-            let paragraph = textView.defaultParagraphStyle ?? NSParagraphStyle.default
-            var links: [StorageRun] = result.tags.map { StorageRun(range:$0.range,value:"memoize-tag:" + $0.value) }
-            links += result.links.map { StorageRun(range:$0.range,value:$0.destination) }
-            links.sort { $0.range.location < $1.range.location }
-            var currentLinks: [StorageRun] = []
-            storage.enumerateAttribute(.link,in:fullRange) { value,range,_ in
-                if let value = value as? String { currentLinks.append(StorageRun(range:range,value:value)) }
-            }
-            let indents = result.listParagraphs.map { list in
-                // Keep the first line's source indentation; align soft wraps after its prefix.
-                StorageRun(range:list.range,value:String(Double(paragraph.firstLineHeadIndent + storage.attributedSubstring(from:list.prefix).size().width)))
-            }
-            var currentIndents: [StorageRun] = []
-            storage.enumerateAttribute(.paragraphStyle,in:fullRange) { value,range,_ in
-                if let style = value as? NSParagraphStyle, style.headIndent != paragraph.headIndent {
-                    currentIndents.append(StorageRun(range:range,value:String(Double(style.headIndent))))
-                }
-            }
-            let relink = StorageRun.coalesced(links) != currentLinks, reindent = StorageRun.coalesced(indents) != currentIndents
-            if relink || reindent {
-                let undo = textView.undoManager; let registered = undo?.isUndoRegistrationEnabled == true
-                if registered { undo?.disableUndoRegistration() }
-                storage.beginEditing()
-                if relink {
-                    storage.removeAttribute(.link,range:fullRange)
-                    storage.removeAttribute(.underlineStyle,range:fullRange)
-                    storage.removeAttribute(.toolTip,range:fullRange)
-                    for tag in result.tags { storage.addAttribute(.link,value:"memoize-tag:" + tag.value,range:tag.range) }
-                    for link in result.links {
-                        storage.addAttribute(.link,value:link.destination,range:link.range)
-                        storage.addAttribute(.underlineStyle,value:NSUnderlineStyle.single.rawValue,range:link.range)
-                        storage.addAttribute(.toolTip,value:"⌘-click to open " + link.destination,range:link.range)
-                    }
-                }
-                if reindent {
-                    storage.addAttribute(.paragraphStyle,value:paragraph,range:fullRange)
-                    for indent in indents {
-                        let style = paragraph.mutableCopy() as! NSMutableParagraphStyle
-                        style.headIndent = CGFloat(Double(indent.value)!)
-                        storage.addAttribute(.paragraphStyle,value:style,range:indent.range)
-                    }
-                }
-                storage.endEditing()
-                if registered { undo?.enableUndoRegistration() }
-            }
-        }
-        guard let manager = textView.textLayoutManager, let content = manager.textContentManager else { return }
-        let start = content.documentRange.location
-        manager.setRenderingAttributes([.foregroundColor:NSColor.labelColor],for:content.documentRange)
-        func textRange(_ range: NSRange) -> NSTextRange? {
-            guard let from = content.location(start,offsetBy:range.location), let end = content.location(from,offsetBy:range.length) else { return nil }
-            return NSTextRange(location:from,end:end)
-        }
-        for span in result.highlights {
-            guard let range = textRange(span.range) else { continue }
-            let color: NSColor
-            switch span.style {
-            case .heading, .link, .tag: color = .controlAccentColor
-            case .strong, .emphasis, .keyword: color = .systemPurple
-            case .code, .quote, .comment: color = .secondaryLabelColor
-            case .string: color = .systemBrown
-            case .number: color = .systemBlue
-            }
-            manager.setRenderingAttributes([.foregroundColor:color],for:range)
-        }
+        // Indents can reflow wrapped list lines above the viewport; keep the reading position.
+        preservingViewport { MarkdownStyler.apply(result,to:textView,paragraph:paragraph) }
+    }
+    func textView(_ textView: NSTextView, shouldChangeTypingAttributes oldTypingAttributes: [String:Any] = [:], toAttributes newTypingAttributes: [NSAttributedString.Key:Any] = [:]) -> [NSAttributedString.Key:Any] {
+        // Typing never inherits a link or a list indent; the styler derives both from the source.
+        var attributes = newTypingAttributes
+        attributes[.link] = nil; attributes[.toolTip] = nil; attributes[.paragraphStyle] = paragraph
+        return attributes
     }
     func showToast(_ text: String?, canUndo: Bool = false) {
         toolbar.hasToast = text != nil; toast.show(text,canUndo:canUndo)

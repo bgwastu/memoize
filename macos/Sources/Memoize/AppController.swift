@@ -17,12 +17,23 @@ import Sparkle
     private var sync: SyncEngine?
     private var client: MemosClient?
     private var current: Note?
-    private var temporary = false
-    private var newNoteID: String?
-    /// The new note has had real content, so leaving it empty must delete the saved copy.
-    private var newNoteCaptured = false
-    private var draftAttachments: [String:RemoteAttachment] = [:]
-    private var draftReturnID: String?
+    /// The note opened with New note, from creation until the user leaves it.
+    /// Every exit goes through `leaveDraft`, so a cleared draft is handled in one place.
+    private struct Draft {
+        var id: String
+        /// The note Back returns to.
+        var returnID: String?
+        /// The store has a copy, so leaving it blank must delete that copy.
+        var saved = false
+        /// The editor is blank: nothing is saved, and any stored copy is stale.
+        var blank = true
+        /// Attachments of discarded captures that native Undo may bring back.
+        var attachments: [String:RemoteAttachment] = [:]
+    }
+    private var draft: Draft?
+    private var temporary: Bool { draft?.blank == true }
+    /// Notes being discarded; an in-flight refresh must not list them again.
+    private var discarding = Set<String>()
     private var navigationID: String?
     private var all: [NoteSummary] = []
     private var cache: [String:Note] = [:]
@@ -135,7 +146,7 @@ import Sparkle
         let directory = support.appending(path:namespace,directoryHint:.isDirectory)
         let newStore = try await Task.detached(priority:.userInitiated) { try LocalStore(directory:directory) }.value
         clearNotice(); syncState = .local; statusText = "Saved on this Mac"
-        store = newStore; cache = [:]; current = nil; navigationID = nil; temporary = false; newNoteID = nil; newNoteCaptured = false; draftReturnID = nil; draftAttachments = [:]
+        store = newStore; cache = [:]; current = nil; navigationID = nil; draft = nil
         try await refresh()
     }
     private func connectUI() {
@@ -153,7 +164,7 @@ import Sparkle
         editor.textView.onEmptyBackspace = { [weak self] in
             guard let self else { return false }
             // Backspace in an empty new note stays there. Leaving is what deletes it.
-            if let id = self.newNoteID, id == self.current?.id { return false }
+            if let id = self.draft?.id, id == self.current?.id { return false }
             self.deleteNote()
             return true
         }
@@ -264,21 +275,26 @@ import Sparkle
         }
         if case .changed = event {
             do {
-                await saveQueue?.value
-                let generation = editGeneration
+                // Wait for every queued autosave, including ones enqueued while waiting.
+                // Reading the store mid-save would return text older than the editor.
+                var settled = saveQueue
+                while let queue = settled { await queue.value; settled = saveQueue == queue ? nil : saveQueue }
+                let generation = editGeneration, queue = saveQueue
                 cache = cache.filter { $0.key == current?.id || unsavedRecovery[$0.key] != nil }
                 try await refresh()
-                if let current, let fresh = try await store?.note(current.id), generation == editGeneration, !hasUnsavedText, !editor.textView.hasMarkedText() {
+                if let current, let fresh = try await store?.note(current.id), self.current?.id == fresh.id,
+                   generation == editGeneration, saveQueue == queue, !hasUnsavedText, !editor.textView.hasMarkedText(),
+                   // A cleared capture is still saved with its old text; merging would bring it back.
+                   !temporary {
                     if fresh.deleted || fresh.deleteAfter != nil { if let id = all.first?.id { openNote(id,show:false) } else { newNote(show:false) } }
                     else {
                         self.current = fresh; cache[fresh.id] = fresh
-                        if !sameSource(fresh.content,editor.textView.string) {
-                            var positioned = fresh; positioned.cursor = editor.textView.selectedRange().location; positioned.selectionLength = editor.textView.selectedRange().length; positioned.scroll = editor.scrollView.contentView.bounds.origin.y
-                            editor.display(positioned)
-                        }
+                        // Replace only the changed span; typing position and Undo history stay valid.
+                        editor.merge(fresh)
+                        rememberPosition()
                         let content = fresh.content
                         let references = await Task.detached { MarkdownAnalysis.parse(content) }.value
-                        if self.current?.id == fresh.id, sameSource(editor.textView.string,content) { updateAttachments(references) }
+                        if self.current?.id == fresh.id, sameSource(editor.textView.source,content) { updateAttachments(references) }
                     }
                 }
             } catch { showError(error) }
@@ -300,17 +316,17 @@ import Sparkle
         if let removal = attachmentUndo, removal.noteID == note.id { removal.restoration.source = text }
         let empty = text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty
         // Stay on this note while it is empty. Deletion waits until the user leaves.
-        if empty, newNoteID == note.id {
-            note.content = text; current = note; cache[note.id] = note; temporary = true
+        if empty, draft?.id == note.id {
+            note.content = text; current = note; cache[note.id] = note; draft?.blank = true
             autosave?.cancel(); autosave = nil; editGeneration += 1; hasUnsavedText = false; firstUnsaved = nil
             showStatus(); return
         }
-        if temporary, !empty {
-            if !newNoteCaptured { note.created = Date() }
-            note.modified = Date(); temporary = false; newNoteCaptured = true
+        if temporary, !empty, let restored = draft?.attachments {
+            if draft?.saved != true { note.created = Date() }
+            note.modified = Date(); draft?.blank = false; draft?.saved = true
             // Native Undo can restore an attachment after a cleared capture received
             // a fresh identity. Its cached bytes must follow the restored source.
-            note.attachments += draftAttachments.values.filter { image in
+            note.attachments += restored.values.filter { image in
                 text.contains("/file/" + image.name) && !note.attachments.contains(where:{ $0.name == image.name })
             }
         } else if !temporary, !sameSource(note.content,text) {
@@ -331,13 +347,15 @@ import Sparkle
     }
     private func discardEmptyNewNote(_ discarded: Note, content: String) {
         let notify = !removingAttachment
-        for image in discarded.attachments { draftAttachments[image.name] = image }
+        var restorable = draft?.attachments ?? [:]
+        for image in discarded.attachments { restorable[image.name] = image }
         autosave?.cancel(); autosave = nil; positionTask?.cancel()
         editGeneration += 1; openGeneration += 1; hasUnsavedText = false; firstUnsaved = nil
         var blank = Note(); blank.content = content
         if let removal = attachmentUndo, removal.noteID == discarded.id { removal.noteID = blank.id; removal.wasDraft = true }
-        current = blank; navigationID = blank.id; newNoteID = blank.id; newNoteCaptured = false; temporary = true
-        cache.removeValue(forKey:discarded.id); all.removeAll { $0.id == discarded.id }
+        current = blank; navigationID = blank.id
+        draft = Draft(id:blank.id,returnID:draft?.returnID,attachments:restorable)
+        cache.removeValue(forKey:discarded.id); all.removeAll { $0.id == discarded.id }; discarding.insert(discarded.id)
         editor.continueDraft(as:blank.id)
         showStatus()
         guard let store else { return }
@@ -355,8 +373,10 @@ import Sparkle
                 }
                 unsavedRecovery.removeValue(forKey:discarded.id)
                 if unsavedRecovery.isEmpty { diskError = nil }
+                discarding.remove(discarded.id)
                 try await refresh()
             } catch {
+                discarding.remove(discarded.id)
                 unsavedRecovery[discarded.id] = discarded; diskError = error.localizedDescription; showStatus()
             }
         }
@@ -366,10 +386,11 @@ import Sparkle
         autosave?.cancel(); autosave = nil
         guard let store, var note = current else { return }
         // The visible source is authoritative, including native undo/redo at an event boundary.
-        if !sameSource(note.content,editor.textView.string) { edited(editor.textView.string); flush(); return }
+        let visible = editor.textView.source
+        if !sameSource(note.content,visible) { edited(visible); flush(); return }
         guard !temporary else { return }
         guard hasUnsavedText else { return }
-        if newNoteID == note.id, note.content.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
+        if draft?.id == note.id, note.content.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
             hasUnsavedText = false; firstUnsaved = nil; return
         }
         let selection = editor.textView.selectedRange(); note.cursor = selection.location; note.selectionLength = selection.length; note.scroll = editor.scrollView.contentView.bounds.origin.y
@@ -422,8 +443,6 @@ import Sparkle
         rememberPosition(immediate:true); flush(); openGeneration += 1; let generation = openGeneration
         navigationID = id
         if let note = unsavedRecovery[id] ?? cache[id] {
-            if let abandonedID = emptyCapturedNewNoteID() { deleteAbandonedNewNote(abandonedID) }
-            temporary = false; newNoteID = nil; newNoteCaptured = false; draftAttachments = [:]
             install(note,show:show,direction:direction); if let query { editor.find(query:query) }
         }
         else {
@@ -434,15 +453,16 @@ import Sparkle
                     // input that arrived while the database read was suspended.
                     rememberPosition(immediate:true); flush()
                     guard generation == openGeneration else { return }
-                    if let abandonedID = emptyCapturedNewNoteID() { deleteAbandonedNewNote(abandonedID) }
-                    temporary = false; newNoteID = nil; newNoteCaptured = false; draftAttachments = [:]
                     install(note,show:show,direction:direction)
                     if let query { editor.find(query:query) }
                 } catch { showError(error) }
             }
         }
     }
-    private func install(_ note: Note, show: Bool, direction: Int = 0) {
+    private func install(_ note: Note, show: Bool, direction: Int = 0, draft newDraft: Draft? = nil) {
+        // The editor still shows the outgoing note here, so a cleared draft is judged on what the user left.
+        if draft != nil, draft?.id != note.id { leaveDraft() }
+        if let newDraft { draft = newDraft }
         openGeneration += 1; navigationID = note.id
         if briefNotice?.message == "New note", briefNotice?.noteID != note.id { clearNotice() }
         current = note; cache[note.id] = note; hasUnsavedText = false; firstUnsaved = nil
@@ -459,10 +479,8 @@ import Sparkle
     private func newNote(show: Bool = true, notify: Bool = true, direction: Int = 0) {
         if temporary { if show { editor.show() }; if show && notify { showNewNoteNotice() }; return }
         rememberPosition(immediate:true); flush(); openGeneration += 1
-        draftReturnID = current?.id
-        draftAttachments = [:]
-        newNoteCaptured = false
-        let note = Note(); navigationID = note.id; newNoteID = note.id; temporary = true; install(note,show:show,direction:direction)
+        let note = Note(); navigationID = note.id
+        install(note,show:show,direction:direction,draft:Draft(id:note.id,returnID:current?.id))
         if show && notify { showNewNoteNotice() }
     }
     private func showNewNoteNotice() {
@@ -510,9 +528,12 @@ import Sparkle
         // Read the actual editor before choosing a destination. A final delete/undo can
         // share an AppKit event boundary with the navigation shortcut.
         flush()
-        if temporary {
-            let previous = draftReturnID.flatMap { id in id != current?.id && all.contains(where:{ $0.id == id }) ? id : nil } ?? all.first { $0.id != current?.id }?.id
-            if direction > 0, let previous { openNote(previous,direction:direction) }
+        if let draft, current?.id == draft.id, direction > 0 || draft.blank {
+            // Back from a new note returns where New note was chosen, whether or not
+            // the note has reached the list yet. A blank one has nothing newer.
+            guard direction > 0 else { return }
+            let back = draft.returnID.flatMap { id in all.contains(where:{ $0.id == id }) ? id : nil } ?? all.first { $0.id != draft.id }?.id
+            if let back { openNote(back,direction:direction) }
             return
         }
         guard let id = navigationID, let index = all.firstIndex(where:{ $0.id == id }) else {
@@ -532,8 +553,9 @@ import Sparkle
         async let pending = store.hasPendingSync()
         let (allNotes,tagValues,filtered,pendingSync) = try await (summaries,tags,results,pending)
         guard generation == refreshGeneration else { return }
-        all = allNotes; hasPendingSync = pendingSync; backgroundSyncError = allNotes.first(where:{ $0.error != nil })?.error
-        library.update(filtered,tagValues:tagValues,selected:current?.id,query:query)
+        all = allNotes.filter { !discarding.contains($0.id) }
+        hasPendingSync = pendingSync; backgroundSyncError = allNotes.first(where:{ $0.error != nil })?.error
+        library.update(filtered.filter { !discarding.contains($0.id) },tagValues:tagValues,selected:current?.id,query:query)
         showStatus()
     }
     private func scheduleSearch() {
@@ -548,9 +570,10 @@ import Sparkle
         guard let note = current, !deleting.contains(note.id) else { return }
         if editor.textView.string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, note.attachments.isEmpty {
             if temporary {
-                let captured = newNoteCaptured && newNoteID == note.id
+                // Leaving a saved draft deletes it with Undo; an unsaved one has nothing to undo.
+                let saved = draft?.id == note.id && draft?.saved == true
                 leaveDeletedNote(note.id)
-                if !captured { showDeletionNotice() }
+                if !saved { showDeletionNotice() }
             } else { commitDeletion(note.id) }
             return
         }
@@ -590,39 +613,42 @@ import Sparkle
         let adjacent = index.flatMap { i in all.indices.contains(i + 1) ? all[i + 1].id : (i > 0 ? all[i - 1].id : nil) }
         all.removeAll { $0.id == id }; cache.removeValue(forKey:id)
         guard current?.id == id else { return }
-        let destination = adjacent ?? draftReturnID.flatMap { id in all.contains(where:{ $0.id == id }) ? id : nil } ?? all.first?.id
+        let destination = adjacent ?? draft?.returnID.flatMap { id in all.contains(where:{ $0.id == id }) ? id : nil } ?? all.first?.id
         hasUnsavedText = false; autosave?.cancel(); positionTask?.cancel()
         if let destination { openNote(destination,direction:1) }
-        else {
-            if emptyCapturedNewNoteID() != nil { deleteAbandonedNewNote(id) }
-            temporary = false; current = nil; newNoteCaptured = false
-            newNote(notify:false)
-        }
+        else { leaveDraft(); current = nil; newNote(notify:false) }
     }
-    /// A new note that was saved, then emptied, and is now being left.
-    private func emptyCapturedNewNoteID() -> String? {
-        guard newNoteCaptured, let id = newNoteID, current?.id == id,
-              editor.textView.string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return nil }
-        return id
+    /// Ends the new-note session. A draft that was saved and is now blank is deleted;
+    /// one with content simply becomes an ordinary note.
+    private func leaveDraft(undoable: Bool = true) {
+        guard let left = draft else { return }
+        draft = nil
+        let blank = editor.textView.string.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty
+        if left.saved, blank, current?.id == left.id, !deleting.contains(left.id) { deleteAbandonedNewNote(left.id,undoable:undoable) }
     }
     /// Queue the delete behind any save of the note's last real text.
-    private func deleteAbandonedNewNote(_ id: String) {
+    private func deleteAbandonedNewNote(_ id: String, undoable: Bool = true) {
         let discarded = cache[id] ?? (current?.id == id ? current : nil)
         cache.removeValue(forKey:id); all.removeAll { $0.id == id }
         guard let store else { return }
+        discarding.insert(id)
         let previous = saveQueue
         saveQueue = Task { [weak self] in
             await previous?.value
             guard let self else { return }
             do {
                 if try await store.note(id) != nil {
-                    try await store.markDelete(id,undoInterval:0)
-                    showDeletionNotice()
+                    let now = Date(), interval: TimeInterval = undoable ? 5 : 0
+                    try await store.markDelete(id,now:now,undoInterval:interval)
+                    if undoable { showBriefNotice("Note deleted",undo:.deletion(id,store),until:now.addingTimeInterval(interval)) }
+                    await sync?.schedule(after:0)
                 }
                 unsavedRecovery.removeValue(forKey:id)
                 if unsavedRecovery.isEmpty { diskError = nil }
+                discarding.remove(id)
                 try await refresh()
             } catch {
+                discarding.remove(id)
                 if let discarded { unsavedRecovery[id] = discarded }
                 diskError = error.localizedDescription; showStatus()
             }
@@ -637,11 +663,11 @@ import Sparkle
         if let selected = current, selected.id == note.id {
             note = selected
             if temporary {
-                if !newNoteCaptured { note.created = Date(); note.modified = note.created }
+                if draft?.saved != true { note.created = Date(); note.modified = note.created }
                 else { note.modified = Date() }
-                newNoteCaptured = true; current = note
+                draft?.saved = true; current = note
             }
-            temporary = false; hasUnsavedText = true; flush()
+            draft?.blank = false; hasUnsavedText = true; flush()
         } else if note.base == nil, note.content.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
             note.created = Date(); note.modified = note.created
         }
@@ -698,7 +724,7 @@ import Sparkle
             } catch {
                 // A failed first attachment must not leave an empty captured note.
                 if attachmentCounts[note.id] == 1, let selected = current, selected.id == note.id,
-                   newNoteID == note.id, selected.attachments.isEmpty,
+                   draft?.id == note.id, selected.attachments.isEmpty,
                    selected.content.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {
                     discardEmptyNewNote(selected,content:selected.content)
                     await saveQueue?.value
@@ -716,7 +742,7 @@ import Sparkle
     private func changeAttachmentAssociation(_ image: Attachment, associated: Bool) {
         // AppKit may undo the attachment before reporting the text change. Keep
         // its metadata available if that text change discards the new capture.
-        if !associated, newNoteID != nil { draftAttachments[image.remote.name] = image.remote }
+        if !associated, draft != nil { draft?.attachments[image.remote.name] = image.remote }
         editor.textView.ownUndoManager.registerUndo(withTarget:self) { controller in
             controller.changeAttachmentAssociation(image,associated:!associated)
         }
@@ -764,7 +790,7 @@ import Sparkle
     private func removeAttachment(_ file: AttachedFile) {
         guard let note = current, let store else { return }
         removingAttachment = true; defer { removingAttachment = false }
-        let wasDraft = temporary || newNoteID == note.id
+        let wasDraft = draft?.id == note.id
         editor.dismissAttachmentPreview()
         let references = MarkdownAnalysis.parse(editor.textView.string)
         let server = client?.server ?? UserDefaults.standard.string(forKey:"server").flatMap { try? MemosClient.normalizedServer($0) }
@@ -989,6 +1015,8 @@ import Sparkle
             await noticeUndoTask?.value
             await finishAttachmentWrites(); flush()
             await saveQueue?.value; await positionTask?.value
+            // A cleared draft still has its old text saved; quitting leaves it, so delete it.
+            if diskError == nil { leaveDraft(undoable:false); await saveQueue?.value }
             if let diskError {
                 let alert = NSAlert(); alert.messageText = "Your latest changes could not be saved."; alert.informativeText = diskError; alert.addButton(withTitle:"Keep Memoize Open"); alert.addButton(withTitle:"Export Note…")
                 if alert.runModal() == .alertSecondButtonReturn { exportUnsaved() }
@@ -1034,7 +1062,7 @@ import Sparkle
         if ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_NEW_NOTE"] == "1" {
             guard let store else { throw MemoizeError.message("Missing new-note smoke store.") }
             let seed = try await store.saveEdit(Note(),content:"Previous note",tags:[],cursor:0,selectionLength:0,scroll:0)
-            temporary = false; newNoteID = nil; newNoteCaptured = false
+            draft = nil
             install(seed,show:true); try await refresh()
             for _ in 0..<80 {
                 if NSApp.isActive { break }
@@ -1075,9 +1103,11 @@ import Sparkle
             try await smokeFooterAndUndo()
             try await smokeListEditing(throughKeyboard:false)
             try await smokeListHangingIndentation()
+            try await smokeRapidTyping()
+            try await smokeLongNoteCaret()
+            try await smokeDraftLifecycle()
             try await smokeAttachmentUndo()
             try await smokeAttachmentPresentation()
-            try await smokeRapidTyping()
             DispatchQueue.main.async { NSApp.terminate(nil) }
             return
         }
@@ -1086,7 +1116,7 @@ import Sparkle
         editor.textView.insertText("# Memoize\nNative source editing. Find native words. #work/macOS\n\n```swift\nlet note = \"Fast and local\"\n```",replacementRange:NSRange(location:0,length:0))
         flush(); await saveQueue?.value
         try await refresh(); library.show()
-        guard all.count == 1, editor.textView.textLayoutManager != nil else { throw MemoizeError.message("UI smoke test failed") }
+        guard all.count == 1, editor.textView.layoutManager != nil, editor.textView.textLayoutManager == nil else { throw MemoizeError.message("UI smoke test failed") }
         FileHandle.standardOutput.write(Data("BENCH fresh-store launch, create, commit, and list: \(appStart.duration(to:.now))\n".utf8))
         try await Task.sleep(for:.milliseconds(250))
         try smokeVisibleEditorText()
@@ -1231,8 +1261,10 @@ import Sparkle
         try await smokeListHangingIndentation()
         try await smokeNewNoteLifecycle()
         try await smokeRapidTyping()
+        try await smokeLongNoteCaret()
+        try await smokeDraftLifecycle()
         openNote(original)
-        FileHandle.standardOutput.write(Data("Memoize UI smoke passed: app-wide hide/restore including Settings, Cmd+` focus/cursor restoration, directional slides, TextKit 2, exact-word find, search excerpts, pin ordering, menu-bar visibility, manual hide, hover/toast-only toolbar, first-input timestamps, empty new note kept until Back, Undo/Redo, reopened empty-note preservation, offline attachments and attachment Undo/Redo, editor → SQLite → library.\n".utf8))
+        FileHandle.standardOutput.write(Data("Memoize UI smoke passed: app-wide hide/restore including Settings, Cmd+` focus/cursor restoration, directional slides, TextKit 1, exact-word find, search excerpts, pin ordering, menu-bar visibility, manual hide, hover/toast-only toolbar, first-input timestamps, empty new note kept until Back, Undo/Redo, reopened empty-note preservation, offline attachments and attachment Undo/Redo, editor → SQLite → library.\n".utf8))
         if let seconds = ProcessInfo.processInfo.environment["MEMOIZE_SMOKE_IDLE_SECONDS"].flatMap(Double.init) { try await Task.sleep(for:.seconds(seconds)) }
         // Leave the Swift task before AppKit enters its deferred-termination event loop.
         DispatchQueue.main.async { NSApp.terminate(nil) }
@@ -1367,7 +1399,7 @@ import Sparkle
         // AppKit groups Undo by event. Let this edit finish before simulating the next input.
         try await Task.sleep(for:.milliseconds(75))
         editor.hide(); try await Task.sleep(for:.milliseconds(100)); editor.show(); try await Task.sleep(for:.milliseconds(100))
-        guard newNoteID == first.id else { throw MemoizeError.message("Hiding ended the new-note session.") }
+        guard draft?.id == first.id else { throw MemoizeError.message("Hiding ended the new-note session.") }
         try await replace(""); await saveQueue?.value
         guard temporary, current?.id == first.id, editor.textView.string.isEmpty,
               try await store.note(first.id)?.deleteAfter == nil,
@@ -1402,7 +1434,7 @@ import Sparkle
         try await replace("Keep after returning"); flush(); await saveQueue?.value
         let kept = try requireSmoke(current)
         newNote(); navigate(1)
-        guard current?.id == kept.id, newNoteID == nil else { throw MemoizeError.message("Leaving did not end the new-note session.") }
+        guard current?.id == kept.id, self.draft == nil else { throw MemoizeError.message("Leaving did not end the new-note session.") }
         try await replace(""); flush(); await saveQueue?.value
         let existing = try requireSmoke(try await store.note(kept.id))
         guard existing.content.isEmpty, abs(existing.created.timeIntervalSince(kept.created)) < 0.001, existing.deleteAfter == nil, !existing.deleted else { throw MemoizeError.message("An existing note was auto-deleted or redated.") }
@@ -1426,7 +1458,7 @@ import Sparkle
         guard restoredImage.id == imageNote.id, restoredImage.content == imageNote.content,
               restoredImage.attachments == imageNote.attachments,
               abs(restoredImage.created.timeIntervalSince(imageNote.created)) < 0.001,
-              try await store.needsAttachmentCopy(restoredImage) == false else { throw MemoizeError.message("Undo did not restore a cleared image capture: content=\(String(reflecting:restoredImage.content)), expected=\(String(reflecting:imageNote.content)), attachments=\(restoredImage.attachments.count)/\(imageNote.attachments.count), sameID=\(restoredImage.id == imageNote.id), temporary=\(temporary), historyImages=\(draftAttachments.count).") }
+              try await store.needsAttachmentCopy(restoredImage) == false else { throw MemoizeError.message("Undo did not restore a cleared image capture: content=\(String(reflecting:restoredImage.content)), expected=\(String(reflecting:imageNote.content)), attachments=\(restoredImage.attachments.count)/\(imageNote.attachments.count), sameID=\(restoredImage.id == imageNote.id), temporary=\(temporary), historyImages=\(draft?.attachments.count ?? 0).") }
         FileHandle.standardOutput.write(Data("New-note lifecycle passed: two-hour blank, whitespace, first text/image, clear before/after save, deletion toast, native Undo/Redo, hide/reveal, leave/reopen.\n".utf8))
     }
     private func smokeRapidTyping() async throws {
@@ -1538,6 +1570,96 @@ import Sparkle
         clearNotice(); editor.toolbar.mouseExited(with:exit)
         FileHandle.standardOutput.write(Data("Footer/Undo passed: persistent sync, hover-only icon controls, independent toast/status, light/dark, stable layout, confirmation plus deferred deletion, action-specific restoration, later typing, original creation date, toast timer replacement.\n".utf8))
     }
+    /// Typing in the middle of a long note keeps the caret where it was typed and
+    /// the viewport still, including edits that restyle lists, tags, and links,
+    /// and a synced change merged in above the caret.
+    private func smokeLongNoteCaret() async throws {
+        let view = editor.textView
+        let passage = "## Section\nSome prose that is long enough to wrap across the narrow floating note window at least once.\n- a list item that also wraps across the floating note window so its hanging indent matters\n#tag and https://example.com\n\n"
+        newNote()
+        view.insertText(String(repeating:passage,count:900),replacementRange:NSRange(location:0,length:0))
+        flush(); await saveQueue?.value
+        let middle = (view.string as NSString).lineRange(for:NSRange(location:(view.string as NSString).length / 2,length:0)).location
+        view.setSelectedRange(NSRange(location:middle,length:0))
+        view.scrollRangeToVisible(view.selectedRange()); editor.panel.displayIfNeeded()
+        func caretY() -> CGFloat { view.convert(view.firstRect(forCharacterRange:view.selectedRange(),actualRange:nil).origin,from:nil).y }
+        var expected = middle
+        let typed = "- new item #wor https://exa\n- nested [link](https://memoize.app) text\n#done "
+        for character in typed {
+            let before = editor.scrollView.contentView.bounds.minY
+            // Return goes through list continuation, exactly like the keyboard.
+            if character == "\n" { view.insertNewline(nil) } else { view.insertText(String(character),replacementRange:view.selectedRange()) }
+            editor.panel.displayIfNeeded()
+            guard view.selectedRange().location > expected else { throw MemoizeError.message("Typing in a long note did not advance the caret: \(view.selectedRange()), after \(expected).") }
+            expected = view.selectedRange().location
+            let jump = abs(editor.scrollView.contentView.bounds.minY - before)
+            guard view.selectedRange().length == 0, view.visibleRect.insetBy(dx:0,dy:-1).contains(NSPoint(x:view.visibleRect.midX,y:caretY())),
+                  jump < 60 else { throw MemoizeError.message("Typing in a long note moved the caret or viewport: caret=\(view.selectedRange()), jump=\(jump).") }
+        }
+        guard (view.string as NSString).substring(with:NSRange(location:middle,length:expected - middle)).hasPrefix("- new item #wor") else { throw MemoizeError.message("Long-note typing landed in the wrong place.") }
+        // A synced change above the caret shifts the caret with its text and keeps the viewport.
+        flush(); await saveQueue?.value
+        var synced = try requireSmoke(current); synced.content = "Synced from another device.\n" + view.string
+        let caret = view.selectedRange().location, top = editor.scrollView.contentView.bounds.minY
+        let anchor = view.characterIndexForInsertion(at:NSPoint(x:30,y:top + 10))
+        let anchorY = view.firstRect(forCharacterRange:NSRange(location:anchor,length:0),actualRange:nil).minY
+        editor.merge(synced)
+        let shift = "Synced from another device.\n".utf16.count
+        let movedY = view.firstRect(forCharacterRange:NSRange(location:anchor + shift,length:0),actualRange:nil).minY
+        guard view.string == synced.content, view.selectedRange() == NSRange(location:caret + shift,length:0),
+              abs(movedY - anchorY) < 2 else { throw MemoizeError.message("A synced change moved the caret or viewport: caret=\(view.selectedRange()), expected=\(caret + shift), anchor moved \(movedY - anchorY).") }
+        view.ownUndoManager.undo()
+        guard !view.string.hasPrefix("Synced from another device."), view.string.utf16.count == synced.content.utf16.count - shift else { throw MemoizeError.message("Undo of a synced change failed: caret=\(view.selectedRange()).") }
+        view.ownUndoManager.redo(); flush(); await saveQueue?.value
+        FileHandle.standardOutput.write(Data("Long-note caret passed: mid-document typing with restyling, synced merge above the caret, Undo/Redo.\n".utf8))
+    }
+    /// Leaving a new note, through every path the draft state changed:
+    /// Back before the list refreshes, a sync while cleared, and a racing refresh.
+    private func smokeDraftLifecycle() async throws {
+        let view = editor.textView
+        func open(_ id: String) async throws {
+            if current?.id != id { openNote(id) }
+            for _ in 0..<100 where current?.id != id { try await Task.sleep(for:.milliseconds(20)) }
+            await saveQueue?.value
+        }
+        func back(from id: String) async throws {
+            navigate(1)
+            for _ in 0..<100 where current?.id == id { try await Task.sleep(for:.milliseconds(20)) }
+        }
+        try await refresh()
+        let home = try requireSmoke(all.count > 2 ? all.last?.id : nil)
+        try await open(home)
+
+        // Back from an untouched new note returns home and deletes nothing.
+        newNote(); let blank = try requireSmoke(current?.id)
+        try await back(from:blank); await saveQueue?.value
+        guard current?.id == home, draft == nil, try await store?.note(blank) == nil else { throw MemoizeError.message("Back from an untouched new note did not return home: current=\(current?.id ?? "none"), home=\(home).") }
+
+        // Back right after typing, before the note reaches the list, still returns home.
+        newNote(); let typed = try requireSmoke(current?.id)
+        view.insertText("Typed then Back",replacementRange:view.selectedRange())
+        guard !all.contains(where:{ $0.id == typed }) else { throw MemoizeError.message("The fresh note was listed before its save; the Back check needs it unlisted.") }
+        try await back(from:typed); await saveQueue?.value
+        guard current?.id == home, try await store?.note(typed)?.content == "Typed then Back" else { throw MemoizeError.message("Back after typing in a new note went to \(current?.id ?? "none") instead of home \(home), or lost its text.") }
+
+        // A saved then cleared capture stays empty through sync; Back deletes it with Undo,
+        // a refresh racing the delete does not list it again, and Undo restores its text.
+        newNote(); view.insertText("Captured then cleared",replacementRange:view.selectedRange())
+        flush(); await saveQueue?.value
+        let id = try requireSmoke(current?.id)
+        view.insertText("",replacementRange:NSRange(location:0,length:view.string.utf16.count))
+        await syncEvent(.changed)
+        guard view.string.isEmpty, temporary, current?.id == id else { throw MemoizeError.message("A sync refresh brought back text the user cleared: \(String(reflecting:view.string)), temporary=\(temporary).") }
+        // Hold the queue so the refresh deterministically runs before the delete.
+        let held = saveQueue; saveQueue = Task { await held?.value; try? await Task.sleep(for:.milliseconds(300)) }
+        try await back(from:id); try await refresh()
+        guard !all.contains(where:{ $0.id == id }) else { throw MemoizeError.message("A refresh racing the delete listed the cleared capture again.") }
+        await saveQueue?.value
+        guard current?.id == home, try await store?.note(id)?.deleteAfter != nil, briefNotice?.undo != nil, !all.contains(where:{ $0.id == id }) else { throw MemoizeError.message("Leaving a cleared capture did not delete it with Undo: current=\(current?.id ?? "none"), home=\(home), deleteAfter=\(String(reflecting:try await store?.note(id)?.deleteAfter)), notice=\(briefNotice?.message ?? "none"), undo=\(briefNotice?.undo != nil).") }
+        undoNotice(); await noticeUndoTask?.value
+        guard current?.id == id, view.string == "Captured then cleared", draft == nil, try await store?.note(id)?.deleteAfter == nil else { throw MemoizeError.message("Undo did not restore the cleared capture: \(String(reflecting:view.string)).") }
+        FileHandle.standardOutput.write(Data("Draft lifecycle passed: Back returns home (untouched, unlisted, cleared), sync keeps a clear, racing refresh, Undo restores.\n".utf8))
+    }
     private func smokeEditorClose() async throws {
         guard let store else { throw MemoizeError.message("Missing editor close test store.") }
         newNote()
@@ -1572,7 +1694,7 @@ import Sparkle
     private func smokeMenuAndDeletion() async throws {
         guard let store else { throw MemoizeError.message("Missing menu test store.") }
         let kept = try await store.saveEdit(Note(),content:"Keep this note",tags:[],cursor:4,selectionLength:0,scroll:0)
-        temporary = false; newNoteID = nil; install(kept,show:true); try await refresh()
+        draft = nil; install(kept,show:true); try await refresh()
         library.show()
         guard editor.libraryToggle.state == .on, library.window.level == editor.panel.level else { throw MemoizeError.message("The menu did not float with the note or activate its toggle.") }
         editor.toolbar.hasToast = true
@@ -1595,7 +1717,7 @@ import Sparkle
         guard current?.id == draft, temporary, deletionAlert == nil, briefNotice?.message != "Note deleted",
               try await store.note(draft) == nil else { throw MemoizeError.message("Backspace deleted an empty new note or left it.") }
         navigate(1)
-        guard current?.id == kept.id, newNoteID == nil else { throw MemoizeError.message("Leaving an unsaved new note did not return to the previous note.") }
+        guard current?.id == kept.id, self.draft == nil else { throw MemoizeError.message("Leaving an unsaved new note did not return to the previous note.") }
         newNote()
         editor.textView.insertText("New capture",replacementRange:editor.textView.selectedRange())
         flush(); await saveQueue?.value
@@ -1650,7 +1772,7 @@ import Sparkle
         await finishAttachmentWrites(); flush(); await saveQueue?.value
         guard temporary, current?.id != failedID, !all.contains(where:{ $0.id == failedID }) else { throw MemoizeError.message("A rejected import left an empty captured note behind.") }
         let note = try await store.saveEdit(Note(),content:"A quiet workspace\n\n",tags:[],cursor:19,selectionLength:0,scroll:0)
-        temporary = false; newNoteID = nil; install(note,show:true)
+        draft = nil; install(note,show:true)
         let image = directory.appendingPathComponent("Preview 🐈.png")
         let text = directory.appendingPathComponent("Notes [draft].txt")
         let png = Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
@@ -1687,7 +1809,7 @@ import Sparkle
         showBriefNotice("Attachment downloaded")
         let reference = try requireSmoke(analysis.images.first)
         editor.textView.setSelectedRange(reference.range)
-        guard editor.textView.writeSelection(to:pasteboard,types:[.string]), pasteboard.string(forType:.string) == (source as NSString).substring(with:reference.range) else { throw MemoizeError.message("Native Markdown copy failed.") }
+        guard editor.textView.writeSelection(to:pasteboard,types:[.string]), pasteboard.string(forType:.string) == (source as NSString).substring(with:reference.range) else { throw MemoizeError.message("Native Markdown copy failed: copied=\(String(reflecting:pasteboard.string(forType:.string))), expected=\(String(reflecting:(source as NSString).substring(with:reference.range))), selection=\(editor.textView.selectedRange()), range=\(reference.range).") }
         editor.textView.noteFinder.show(query:"Preview 🐈")
         guard editor.textView.selectedRange() == (source as NSString).range(of:"Preview 🐈") else { throw MemoizeError.message("Attachment references did not preserve exact Find.") }
         editor.textView.noteFinder.finder.performAction(.hideFindInterface)
@@ -1755,7 +1877,7 @@ import Sparkle
         // A user can erase the Markdown reference before removing its file.
         // Removing only metadata must survive an earlier autosave finishing.
         let metadataNote = try await store.saveEdit(Note(),content:"Keep my text",tags:[],cursor:12,selectionLength:0,scroll:0)
-        temporary = false; newNoteID = nil; install(metadataNote,show:true)
+        draft = nil; install(metadataNote,show:true)
         insertAttachment(png,name:"Metadata.png",mime:"image/png")
         await finishAttachmentWrites(); flush(); await saveQueue?.value
         let metadataFile = try requireSmoke(editor.attachmentStrip.files.first)
@@ -1900,7 +2022,7 @@ import Sparkle
         let png = Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
         for (filename,mime,bytes) in [("Undo.png","image/png",png),("Undo.txt","text/plain",Data("File Undo".utf8))] {
             let existing = try await store.saveEdit(Note(),content:"An existing note",tags:[],cursor:16,selectionLength:0,scroll:0)
-            temporary = false; newNoteID = nil; install(existing,show:true)
+            draft = nil; install(existing,show:true)
             for fresh in [false,true] {
                 if fresh { newNote() }
                 let before = editor.textView.string
@@ -1917,9 +2039,11 @@ import Sparkle
                 try await Task.sleep(for:.milliseconds(100))
                 editor.textView.ownUndoManager.redo(); flush(); await saveQueue?.value
                 let restored = try requireSmoke(current)
-                guard editor.textView.string == pasted.content, restored.attachments == pasted.attachments else { throw MemoizeError.message("Attachment Redo did not restore source and attachment together: fresh=\(fresh), source=\(String(reflecting:editor.textView.string)), attachments=\(restored.attachments.count)/\(pasted.attachments.count), historyAttachments=\(draftAttachments.count).") }
+                guard editor.textView.string == pasted.content, restored.attachments == pasted.attachments else { throw MemoizeError.message("Attachment Redo did not restore source and attachment together: fresh=\(fresh), source=\(String(reflecting:editor.textView.string)), attachments=\(restored.attachments.count)/\(pasted.attachments.count), historyAttachments=\(draft?.attachments.count ?? 0).") }
                 if fresh {
-                    guard restored.id != pasted.id, try await store.needsAttachmentCopy(restored) else { throw MemoizeError.message("Restored file capture did not receive independent ownership.") }
+                    // A cleared new note stays in place until left, so Redo restores the same note,
+                    // which still owns its file.
+                    guard restored.id == pasted.id, try await store.needsAttachmentCopy(restored) == false else { throw MemoizeError.message("Redo in a new note did not keep its identity and file: sameID=\(restored.id == pasted.id), needsCopy=\(try await store.needsAttachmentCopy(restored)), file=\(filename).") }
                 }
             }
         }

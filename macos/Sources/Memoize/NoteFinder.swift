@@ -1,6 +1,6 @@
 import AppKit
 
-/// Keep AppKit's find bar and keyboard behavior, with precise TextKit 2 geometry.
+/// Keep AppKit's find bar and keyboard behavior, with exact TextKit 1 geometry.
 @MainActor final class NoteFinder: NSObject, @MainActor NSTextFinderClient {
     let finder = NSTextFinder()
     private weak var textView: SourceTextView?
@@ -29,9 +29,10 @@ import AppKit
         }
     }
     var visibleCharacterRanges: [NSValue] {
-        guard let manager = textView?.textLayoutManager, let content = manager.textContentManager else { return [] }
-        let range = manager.textViewportLayoutController.viewportRange ?? content.documentRange
-        return [NSValue(range:NSRange(location:content.offset(from:content.documentRange.location,to:range.location),length:content.offset(from:range.location,to:range.endLocation)))]
+        guard let view = textView, let layout = view.layoutManager, let container = view.textContainer else { return [] }
+        let origin = view.textContainerOrigin
+        let glyphs = layout.glyphRange(forBoundingRect:view.visibleRect.offsetBy(dx:-origin.x,dy:-origin.y),in:container)
+        return [NSValue(range:layout.characterRange(forGlyphRange:glyphs,actualGlyphRange:nil))]
     }
     func scrollRangeToVisible(_ range: NSRange) {
         guard range.location != NSNotFound, NSMaxRange(range) <= (string as NSString).length else { return }
@@ -45,14 +46,13 @@ import AppKit
         return textView ?? NSView()
     }
     func rects(forCharacterRange range: NSRange) -> [NSValue]? {
-        guard let view = textView, let manager = view.textLayoutManager, let content = manager.textContentManager,
-              range.location != NSNotFound, NSMaxRange(range) <= (view.string as NSString).length,
-              let start = content.location(content.documentRange.location,offsetBy:range.location),
-              let end = content.location(start,offsetBy:range.length), let textRange = NSTextRange(location:start,end:end) else { return nil }
+        guard let view = textView, let layout = view.layoutManager, let container = view.textContainer,
+              range.location != NSNotFound, NSMaxRange(range) <= (view.textStorage?.length ?? 0) else { return nil }
+        let origin = view.textContainerOrigin
+        let glyphs = layout.glyphRange(forCharacterRange:range,actualCharacterRange:nil)
         var rects: [NSValue] = []
-        manager.enumerateTextSegments(in:textRange,type:.standard,options:[]) { _,rect,_,_ in
-            rects.append(NSValue(rect:rect.offsetBy(dx:view.textContainerOrigin.x,dy:view.textContainerOrigin.y)))
-            return true
+        layout.enumerateEnclosingRects(forGlyphRange:glyphs,withinSelectedGlyphRange:NSRange(location:NSNotFound,length:0),in:container) { rect,_ in
+            rects.append(NSValue(rect:rect.offsetBy(dx:origin.x,dy:origin.y)))
         }
         return rects
     }

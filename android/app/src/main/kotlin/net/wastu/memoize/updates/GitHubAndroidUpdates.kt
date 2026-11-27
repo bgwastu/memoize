@@ -36,10 +36,9 @@ class GitHubAndroidUpdates(private val api: PublicReleaseApi = UrlConnectionRele
 
             for (release in releases) {
                 val tag = release["tag_name"]?.jsonPrimitive?.contentOrNull ?: continue
-                if (!tag.matches(Regex("android/v[0-9]+\\.[0-9]+\\.[0-9]+")) ||
-                    release["draft"]?.jsonPrimitive?.booleanOrNull != false ||
+                val name = releaseTag.matchEntire(tag)?.groupValues?.get(1) ?: continue
+                if (release["draft"]?.jsonPrimitive?.booleanOrNull != false ||
                     release["prerelease"]?.jsonPrimitive?.booleanOrNull != false) continue
-                val name = tag.removePrefix("android/v")
                 val assets = release["assets"]?.jsonArray?.associate { asset ->
                     val fields = asset.jsonObject
                     fields["name"]!!.jsonPrimitive.content to fields["browser_download_url"]!!.jsonPrimitive.content
@@ -85,6 +84,7 @@ class GitHubAndroidUpdates(private val api: PublicReleaseApi = UrlConnectionRele
     }
 
     companion object {
+        private val releaseTag = Regex("(?:android/)?v([0-9]+\\.[0-9]+\\.[0-9]+)")
         const val start = "https://api.github.com/repos/bgwastu/memoize/releases?per_page=100"
     }
 }

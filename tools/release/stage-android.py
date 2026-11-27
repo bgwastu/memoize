@@ -16,7 +16,7 @@ apk = out / f"Memoize-{version}.apk"
 shutil.copy2("android/app/build/outputs/apk/release/app-release.apk", apk)
 digest = hashlib.sha256(apk.read_bytes()).hexdigest()
 metadata = {"schema": 1, "repository": "bgwastu/memoize", "platform": "android",
-            "tag": f"android/v{version}", "version_name": version, "version_code": code,
+            "tag": f"v{version}", "version_name": version, "version_code": code,
             "source_sha": source, "assets": {apk.name: digest},
             "signing_certificate_sha256": os.environ["MEMOIZE_ANDROID_CERTIFICATE_SHA256"]}
 (out / "release.json").write_text(json.dumps(metadata, indent=2) + "\n")

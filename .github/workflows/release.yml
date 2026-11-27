@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       android: ${{ steps.platforms.outputs.android }}
+      version-name: ${{ steps.version.outputs.name }}
+      version-code: ${{ steps.version.outputs.code }}
       macos: ${{ steps.platforms.outputs.macos }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -45,11 +47,18 @@ jobs:
           tooling = {"android/.gitignore", "android/README.md", "macos/.gitignore", "macos/README.md", "macos/Scripts/test.sh", "macos/Scripts/export-tag-fixtures.go", "macos/Scripts/update-tag-data.py"}
           paths = [path for path in paths if path and not path.startswith(ignored) and path not in tooling]
           shared = any(path in {".release-offset", "LICENSE"} for path in paths)
-          android = shared or any(path.startswith(("android/", "tools/release/", "shared/assets/")) for path in paths)
           macos = shared or any(path.startswith("macos/") for path in paths)
+          release_workflow_changed = ".github/workflows/release.yml" in paths
+          # Every public release needs a matching APK for GitHub-based Android updaters.
+          android = macos or release_workflow_changed or any(path.startswith(("android/", "tools/release/", "shared/assets/")) for path in paths)
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
               output.write(f"android={str(android).lower()}\nmacos={str(macos).lower()}\n")
           PY
+      - id: version
+        run: |
+          code=$(($(git rev-list --count HEAD) + $(cat .release-offset)))
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "name=0.1.$code" >> "$GITHUB_OUTPUT"
   android:
     needs: changes
     if: needs.changes.outputs.android == 'true'
@@ -73,32 +82,28 @@ jobs:
         with:
           packages: platforms;android-37.1 build-tools;37.0.0
       - uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5
-      - id: version
-        run: |
-          number=$(($(git rev-list --count HEAD) + $(cat .release-offset)))
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-          echo "name=0.1.$number" >> "$GITHUB_OUTPUT"
       - name: Materialize signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: python3 tools/release/android-key.py
       - name: Build signed APK
         env:
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-          VERSION_CODE: ${{ steps.version.outputs.number }}
+          VERSION_NAME: ${{ needs.changes.outputs.version-name }}
+          VERSION_CODE: ${{ needs.changes.outputs.version-code }}
         run: android/gradlew -p android -PmemoizeVersionName="$VERSION_NAME" -PmemoizeVersionCode="$VERSION_CODE" assembleRelease
       - name: Verify and stage APK
         env:
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-          VERSION_CODE: ${{ steps.version.outputs.number }}
+          VERSION_NAME: ${{ needs.changes.outputs.version-name }}
+          VERSION_CODE: ${{ needs.changes.outputs.version-code }}
         run: |
           python3 tools/release/verify-apk.py --apk android/app/build/outputs/apk/release/app-release.apk --version-name "$VERSION_NAME" --version-code "$VERSION_CODE"
           python3 tools/release/stage-android.py
-      - name: Publish Android release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-        run: gh release create "android/v$VERSION_NAME" android/build/release/* --target "$GITHUB_SHA" --title "Memoize Android $VERSION_NAME" --notes "Android APK built from $GITHUB_SHA." --latest=false
+      - name: Upload Android release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-release
+          path: android/build/release/
+          if-no-files-found: error
       - name: Remove temporary key
         if: always()
         run: rm -f "$RUNNER_TEMP/memoize-production-signing.keystore"
@@ -112,8 +117,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - id: version
-        run: echo "name=0.1.$(($(git rev-list --count HEAD) + $(cat .release-offset)))" >> "$GITHUB_OUTPUT"
       - name: Load stable Mac signing identity
         env:
           MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
@@ -123,16 +126,71 @@ jobs:
       - name: Build and sign update package
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          VERSION_NAME: ${{ steps.version.outputs.name }}
+          VERSION_NAME: ${{ needs.changes.outputs.version-name }}
         run: |
           test -n "$SPARKLE_PRIVATE_KEY"
           test -n "$MACOS_SIGNING_IDENTITY"
           macos/Scripts/release.sh "$VERSION_NAME"
-      - name: Publish Mac release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-        run: gh release create "v$VERSION_NAME" macos/build/release/* --target "$GITHUB_SHA" --title "Memoize Mac $VERSION_NAME" --notes "Mac update built from $GITHUB_SHA." --latest
+      - name: Upload Mac release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-release
+          path: macos/build/release/
+          if-no-files-found: error
       - name: Remove temporary Mac signing keychain
         if: always() && env.MACOS_SIGNING_DIRECTORY != ''
         run: python3 macos/Scripts/mac-signing.py cleanup
+  publish:
+    needs: [changes, android, macos]
+    if: ${{ !cancelled() && needs.android.result == 'success' && (needs.macos.result == 'success' || needs.macos.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_MACOS: ${{ needs.changes.outputs.macos }}
+          VERSION_NAME: ${{ needs.changes.outputs.version-name }}
+        run: |
+          tag="v$VERSION_NAME"
+          apk="release-assets/Memoize-$VERSION_NAME.apk"
+          manifest="release-assets/release.json"
+          sums="release-assets/SHA256SUMS"
+          feed="release-assets/appcast.xml"
+          test -s "$apk" && test -s "$manifest" && test -s "$sums" || exit 1
+
+          publish() {
+            local release_tag="$1" latest="$2"
+            shift 2
+            local draft
+            if draft=$(gh release view "$release_tag" --json isDraft --jq .isDraft 2>/dev/null); then
+              if [[ "$draft" == true ]]; then
+                gh release upload "$release_tag" "$@" --clobber
+                gh release edit "$release_tag" --draft=false --latest="$latest"
+              fi
+            else
+              gh release create "$release_tag" "$@" --target "$GITHUB_SHA" \
+                --title "Memoize $VERSION_NAME" --notes "Build from $GITHUB_SHA." --latest="$latest"
+            fi
+          }
+
+          previous=$(gh release view --json tagName,assets)
+          previous_tag=$(jq -r .tagName <<< "$previous")
+          if [[ "$BUILD_MACOS" == true ]]; then
+            test -s "release-assets/Memoize-$VERSION_NAME.zip"
+          else
+            gh release download "$previous_tag" --pattern appcast.xml --pattern "Memoize-*.zip" --dir release-assets
+          fi
+          test -s "$feed"
+
+          # Upgrade installations that only recognize the former Android channel.
+          if jq -e '.assets | all(.name != "release.json")' <<< "$previous" >/dev/null; then
+            legacy_tag="android/$tag"
+            jq --arg tag "$legacy_tag" '.tag = $tag' "$manifest" > "$RUNNER_TEMP/release.json"
+            publish "$legacy_tag" false "$apk" "$RUNNER_TEMP/release.json" "$sums"
+          fi
+          publish "$tag" true release-assets/*
